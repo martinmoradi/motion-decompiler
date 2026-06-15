@@ -48,6 +48,10 @@ Capture-repair loop (off by default; inert unless a provider is configured):
   --repair-confidence-floor F  skip a retry below this provider confidence (default 0.4)
   --repair-causes LIST   comma list of repairable buckets
                          (default occlusion,hidden_not_visible,inert_representative)
+  --repair-dump          write the §2 diagnosis input + viewport screenshot for
+                         each repairable soft-fail and STOP (no provider, no
+                         re-measure). Decouples diagnosis from the loop so an
+                         external orchestrator can diagnose in parallel.
 
 Manifest capture examples:
   { "id": "work-card-hover", "type": "hover", "root": "a.work_home_item_link", "waitMs": 1200 }
@@ -93,6 +97,8 @@ function parseFlags(argv) {
       flags.repairConfidenceFloor = Number(argv[++i]);
     } else if (arg === '--repair-causes') {
       flags.repairCauses = String(argv[++i] || '').split(',').map(s => s.trim()).filter(Boolean);
+    } else if (arg === '--repair-dump') {
+      flags.repairDump = true;
     } else if (arg === '--no-open') {
       flags.noOpen = true;
     } else if (arg === '--keep-open') {
@@ -724,6 +730,24 @@ const REPAIR_DEFAULTS = { maxRetries: 2, confidenceFloor: 0.4, budgetMultiplier:
 
 function isStatefulRepairKind(kind) {
   return STATEFUL_REPAIR_KINDS.includes(kind);
+}
+
+// Which buckets the --repair-dump pass writes a diagnosis input for. Honors an
+// explicit --repair-causes list; otherwise the narrow default the loop uses.
+function repairDumpCauses(flags = {}) {
+  const causes = Array.isArray(flags.repairCauses) && flags.repairCauses.length
+    ? flags.repairCauses.filter(c => REPAIR_ROOT_CAUSES.includes(c))
+    : DEFAULT_REPAIRABLE_CAUSES;
+  return causes.length ? causes : DEFAULT_REPAIRABLE_CAUSES;
+}
+
+// Pure decision (no browser): does this engine result earn a §2 diagnosis dump?
+// Only repairable empty/error results do — exactly the set the loop would route.
+// `ok`/`check`/`skipped` never dump (nothing to repair).
+function shouldDumpRepairInput(result, dumpEnabled, causes) {
+  if (!dumpEnabled) return false;
+  if (!result || (result.status !== 'empty' && result.status !== 'error')) return false;
+  return Array.isArray(causes) && causes.includes(result.cause);
 }
 
 // Resolve the effective repair config from manifest + CLI flags. Returns null
@@ -1765,6 +1789,32 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
     recapture: recaptureForRepair,
   } : null;
 
+  // ── --repair-dump: write the §2 diagnosis input + screenshot for each
+  // repairable soft-fail and stop there (no provider, no re-measure). This
+  // decouples diagnosis from the loop so an external orchestrator (the skill)
+  // can diagnose all failures in parallel before re-measuring. Reuses the exact
+  // Part 6 input-writer + probe + screenshot, so the dumped input is byte-for-
+  // byte what the in-tool loop would have built. Never throws into the loop. ──
+  const dumpCauses = repairDumpCauses(flags);
+  const maybeDumpRepairInput = (result, capture, type, id, failSelector) => {
+    if (!shouldDumpRepairInput(result, flags.repairDump === true, dumpCauses)) return;
+    try {
+      const sel = failSelector || primaryCaptureSelector(capture, type);
+      const relShot = `repair/${id}.attempt-1.png`;
+      const screenshot = captureRepairScreenshot(runDir, sel, relShot);
+      const repairContext = runRepairContext(runDir, sel);
+      const input = buildRepairInput({
+        capture, type, id, url: capture.url || manifest.url, viewport,
+        result, attempt: 1, screenshot, repairContext, map, attemptHistory: [],
+      });
+      const file = writeRepairInput(runDir, id, 1, input);
+      result.repairInput = path.relative(runDir, file);
+      appendLog(runDir, `Repair-dump for ${id}: wrote \`${result.repairInput}\`${screenshot ? '' : ' (no screenshot)'}\n`);
+    } catch (error) {
+      appendLog(runDir, `\nRepair-dump error for ${id}: ${error.message || error}\n`);
+    }
+  };
+
   // Returns the result object to push. Runs the repair loop only for a
   // repairable empty/error; otherwise stamps origin and returns the result
   // unchanged.
@@ -1874,6 +1924,7 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       };
       const recipeSelector = capture.root || actionSelector || scrollTarget || null;
       attachCause(result, capture, type, { selector: recipeSelector });
+      maybeDumpRepairInput(result, capture, type, id, recipeSelector);
       results.push(maybeRepair(result, capture, type, id, recipeSelector));
       if (capture.resetAction) {
         try {
@@ -1906,6 +1957,7 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       // A non-fatal error (e.g. occlusion preflight) leaves the page usable, so
       // the repair loop can probe + re-run. A fatal page blocker cannot.
       const errSelector = primaryCaptureSelector(capture, type);
+      if (!error.fatalPageState) maybeDumpRepairInput(errorResult, capture, type, id, errSelector);
       const pushResult = error.fatalPageState ? errorResult : maybeRepair(errorResult, capture, type, id, errSelector);
       if (!pushResult.origin) pushResult.origin = 'first-try';
       results.push(pushResult);
@@ -1950,6 +2002,9 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       origin: result.origin || (result.status === 'skipped' ? undefined : 'first-try'),
       repair: result.repair,
       lowConfidenceDiagnosis: result.lowConfidenceDiagnosis,
+      // --repair-dump provenance: the §2 input written for this repairable
+      // soft-fail (so an external orchestrator can find it). Absent otherwise.
+      repairInput: result.repairInput,
     })),
   });
   appendLog(runDir, `\nSaved ${timelineCount(results)} timeline(s); ${results.length} capture result(s).\n`);
@@ -3659,6 +3714,8 @@ if (require.main === module) {
     primaryCaptureSelector,
     resultTriple,
     isStatefulRepairKind,
+    shouldDumpRepairInput,
+    repairDumpCauses,
     repairConfig,
     invokeRepairProvider,
     buildRepairInput,

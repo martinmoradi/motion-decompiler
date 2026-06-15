@@ -349,5 +349,31 @@ function ok(name, cond) {
   ok('SF7: output path found despite trailing diagnostics', noisy && noisy.action && noisy.action.kind === 'retarget_selector');
 }
 
+// ── --repair-dump gating predicate (browser-free) ────────────────────────────
+{
+  const causes = m.DEFAULT_REPAIRABLE_CAUSES;
+  const r = (status, cause) => ({ status, cause });
+  // Off by default: no dump when the flag is not set, even for a repairable fail.
+  ok('dump: flag off -> never dumps', m.shouldDumpRepairInput(r('empty', 'occlusion'), false, causes) === false);
+  // Repairable empty/error of a repairable cause -> dump.
+  ok('dump: repairable empty dumps', m.shouldDumpRepairInput(r('empty', 'occlusion'), true, causes) === true);
+  ok('dump: repairable error dumps', m.shouldDumpRepairInput(r('error', 'hidden_not_visible'), true, causes) === true);
+  ok('dump: inert_representative dumps', m.shouldDumpRepairInput(r('empty', 'inert_representative'), true, causes) === true);
+  // Successes never dump.
+  ok('dump: ok never dumps', m.shouldDumpRepairInput(r('ok', 'occlusion'), true, causes) === false);
+  ok('dump: check never dumps', m.shouldDumpRepairInput(r('check', 'occlusion'), true, causes) === false);
+  ok('dump: skipped never dumps', m.shouldDumpRepairInput(r('skipped', undefined), true, causes) === false);
+  // Out-of-bucket causes are not dumped (Parts 2/4 already fixed these).
+  ok('dump: pseudo_element not dumped by default', m.shouldDumpRepairInput(r('empty', 'pseudo_element'), true, causes) === false);
+  ok('dump: wrong_document_iframe not dumped by default', m.shouldDumpRepairInput(r('error', 'wrong_document_iframe'), true, causes) === false);
+  ok('dump: null cause not dumped', m.shouldDumpRepairInput(r('empty', null), true, causes) === false);
+  ok('dump: missing result -> false', m.shouldDumpRepairInput(null, true, causes) === false);
+
+  // repairDumpCauses: explicit --repair-causes narrows/overrides; default else.
+  ok('dumpCauses: default is the narrow three', JSON.stringify(m.repairDumpCauses({})) === JSON.stringify(m.DEFAULT_REPAIRABLE_CAUSES));
+  ok('dumpCauses: explicit list honored', JSON.stringify(m.repairDumpCauses({ repairCauses: ['occlusion'] })) === JSON.stringify(['occlusion']));
+  ok('dumpCauses: junk causes filtered, falls back to default', JSON.stringify(m.repairDumpCauses({ repairCauses: ['made_up'] })) === JSON.stringify(m.DEFAULT_REPAIRABLE_CAUSES));
+}
+
 fs.rmSync(runDir, { recursive: true, force: true });
 console.log(`repair-loop.test.js: ${passed} checks passed`);
