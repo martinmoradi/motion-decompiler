@@ -1100,8 +1100,14 @@ function meetsSuccess(result, criterion) {
   if (!criterion || criterion.expect === 'status_ok_or_check') return true;
   if (criterion.onSelector) {
     const moved = result.movedSelectors || [];
-    const want = String(criterion.onSelector);
-    return moved.some(s => s && (s.includes(want) || want.includes(s)));
+    // Compare on tag/class/id tokens, not raw CSS-path string equality: the
+    // engine emits a finding selector like `div.carousel__arrow.carousel__arrow--prev`
+    // for a criterion of `div.carousel__arrow--prev`, so a substring test misses.
+    // A moved selector satisfies the criterion when it carries every token the
+    // criterion names.
+    const tokens = String(criterion.onSelector).split(/[.#\s>+~]+/).filter(Boolean);
+    if (!tokens.length) return true;
+    return moved.some(s => s && tokens.every(t => s.includes(t)));
   }
   return true;
 }
