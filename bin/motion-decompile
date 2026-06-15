@@ -40,6 +40,15 @@ Readiness/rate-limit options:
   --capture-strategy S   reuse-page (default) or fresh
   --fresh-captures       shorthand for --capture-strategy fresh
 
+Capture-repair loop (off by default; inert unless a provider is configured):
+  --repair-cmd CMD       external provider: \`CMD <input.json>\` writes output.json,
+                         prints its path on stdout (design §5)
+  --repair-max-retries N per-capture retries (default 2)
+  --repair-budget N      per-run attempt ceiling (default min(2×repairable, 24))
+  --repair-confidence-floor F  skip a retry below this provider confidence (default 0.4)
+  --repair-causes LIST   comma list of repairable buckets
+                         (default occlusion,hidden_not_visible,inert_representative)
+
 Manifest capture examples:
   { "id": "work-card-hover", "type": "hover", "root": "a.work_home_item_link", "waitMs": 1200 }
   { "id": "faq-accordion", "type": "click", "root": "div.g_faq_item.w-dyn-item", "action": "click div.g_faq_item.w-dyn-item", "waitMs": 900 }
@@ -74,6 +83,16 @@ function parseFlags(argv) {
       flags.captureStrategy = argv[++i];
     } else if (arg === '--fresh-captures') {
       flags.captureStrategy = 'fresh';
+    } else if (arg === '--repair-cmd') {
+      flags.repairCmd = argv[++i];
+    } else if (arg === '--repair-max-retries') {
+      flags.repairMaxRetries = Number(argv[++i]);
+    } else if (arg === '--repair-budget') {
+      flags.repairBudget = Number(argv[++i]);
+    } else if (arg === '--repair-confidence-floor') {
+      flags.repairConfidenceFloor = Number(argv[++i]);
+    } else if (arg === '--repair-causes') {
+      flags.repairCauses = String(argv[++i] || '').split(',').map(s => s.trim()).filter(Boolean);
     } else if (arg === '--no-open') {
       flags.noOpen = true;
     } else if (arg === '--keep-open') {
@@ -986,6 +1005,263 @@ function writeRepairInput(runDir, id, attempt, input) {
   return file;
 }
 
+// Recipe-action vocabulary a precondition_action may use — exactly what
+// runAction() already understands. The provider cannot inject anything else.
+const REPAIR_ACTION_VERBS = ['click', 'dblclick', 'hover', 'focus', 'scrollintoview', 'wait', 'eval', 'press', 'scroll', 'mouse'];
+
+function validRecipeStep(step) {
+  if (step && typeof step === 'object') return Boolean(step.eval || step.waitMs != null || step.command);
+  if (typeof step !== 'string' || !step.trim()) return false;
+  try { return REPAIR_ACTION_VERBS.includes(splitAction(step).command); } catch (e) { return false; }
+}
+
+// Validate the provider's structured output against the closed contract (§3).
+// An invalid/unparseable response is the caller's signal to fail safe to
+// terminal_give_up(provider_error) — the loop never acts on garbage.
+function validateRepairOutput(raw) {
+  if (!raw || typeof raw !== 'object') return { valid: false, error: 'output is not an object' };
+  const action = raw.action;
+  if (!action || typeof action !== 'object' || !REPAIR_ACTION_KINDS.includes(action.kind)) {
+    return { valid: false, error: `invalid action.kind: ${action && action.kind}` };
+  }
+  const kind = action.kind;
+  if ((kind === 'retarget_selector' || kind === 'use_other_instance') && !action.selector && action.nth == null) {
+    return { valid: false, error: `${kind} needs selector or nth` };
+  }
+  if (kind === 'scroll_into_view' && !action.selector) return { valid: false, error: 'scroll_into_view needs selector' };
+  if (kind === 'precondition_action') {
+    if (!Array.isArray(action.actions) || !action.actions.length) return { valid: false, error: 'precondition_action needs actions[]' };
+    if (!action.actions.every(validRecipeStep)) return { valid: false, error: 'precondition_action has an unrecognized step' };
+  }
+  if (kind === 'retarget_iframe' && !action.frameSelector && !action.url) return { valid: false, error: 'retarget_iframe needs frameSelector or url' };
+
+  let confidence = Number(raw.confidence);
+  if (!Number.isFinite(confidence)) confidence = 0;
+  confidence = Math.max(0, Math.min(1, confidence));
+  const rootCause = REPAIR_ROOT_CAUSES.includes(raw.rootCause) ? raw.rootCause : 'ambiguous';
+  const sc = (raw.successCriterion && typeof raw.successCriterion === 'object') ? raw.successCriterion : { expect: 'moved' };
+  if (!['moved', 'status_ok_or_check'].includes(sc.expect)) sc.expect = 'moved';
+  return {
+    valid: true,
+    repair: {
+      diagnosis: String(raw.diagnosis || ''),
+      rootCause,
+      confidence,
+      action,
+      successCriterion: sc,
+      abortCriterion: raw.abortCriterion || null,
+    },
+  };
+}
+
+// Prepend recipe steps to whichever pre-trigger action the recipe will run
+// (setupAction || beforeAction), so a precondition/scroll repair actually fires.
+function prependBeforeAction(clone, steps) {
+  const active = clone.setupAction != null ? 'setupAction' : 'beforeAction';
+  const existing = clone[active];
+  const tail = existing == null ? [] : (Array.isArray(existing) ? existing : [existing]);
+  clone[active] = steps.concat(tail);
+}
+
+// Apply a validated repair action to a CLONE of the capture (design §3). Every
+// non-terminal action reduces to selector edits + the runAction vocabulary — no
+// measurement, no new browser primitive. Stateful kinds set `fresh:true` (M1).
+function applyRepair(capture, type, action) {
+  const clone = JSON.parse(JSON.stringify(capture));
+  const kind = action.kind;
+  if (kind === 'retarget_selector' || kind === 'use_other_instance') {
+    if (action.selector) {
+      clone.root = action.selector;
+      clone.selector = action.selector;
+      clone.scrollTarget = action.selector;
+      delete clone.target;
+      delete clone.action;   // let defaultAction/defaultArm rebuild from the new selector
+      delete clone.arm;
+    }
+    if (action.nth != null) clone.repairNth = action.nth;   // advisory; selector is authoritative
+  } else if (kind === 'scroll_into_view') {
+    prependBeforeAction(clone, [`scrollintoview ${action.selector}`, 'wait 300']);
+    clone.fresh = true;
+  } else if (kind === 'precondition_action') {
+    prependBeforeAction(clone, action.actions.slice());
+    clone.fresh = true;
+  } else if (kind === 'retarget_iframe') {
+    if (action.url) clone.url = action.url;
+    clone.fresh = true;
+  }
+  return clone;
+}
+
+// Did the re-measured ENGINE result meet the machine-checked criterion (§3)?
+// Reads status/movedSelectors only — never the model's self-report.
+function meetsSuccess(result, criterion) {
+  const okish = result && (result.status === 'ok' || result.status === 'check');
+  if (!okish) return false;
+  if (!criterion || criterion.expect === 'status_ok_or_check') return true;
+  if (criterion.onSelector) {
+    const moved = result.movedSelectors || [];
+    const want = String(criterion.onSelector);
+    return moved.some(s => s && (s.includes(want) || want.includes(s)));
+  }
+  return true;
+}
+
+// The (status, cause, occludedBy) triple used for repeated-identical detection
+// (design §4.3): a repair that reproduces a prior attempt's triple is not
+// converging, so the loop stops rather than burning more retries.
+function resultTriple(result) {
+  const occ = (result && result.causeSignals && result.causeSignals.occludedBy) || '';
+  return `${result && result.status}|${(result && result.cause) || ''}|${occ}`;
+}
+
+function normalizeTerminalCause(cause) {
+  return TERMINAL_CAUSES.includes(cause) ? cause : 'needs_human';
+}
+
+// The repair loop (design §1, §4). Pure orchestration over INJECTED effects so
+// it is testable with no browser and no model (env supplies the stubs):
+//   env = { log, screenshot(selector, relPath), repairContext(selector),
+//           writeInput(input, attempt), callProvider(inputPath),
+//           recapture(clonedCapture, type, id, fresh) -> engine result }
+//   ctx = { capture, type, id, url, viewport, map, result, config, budget }
+// Returns { result, repair, origin }. `result` is the engine-measured verdict
+// to push (the original failure unless a repair genuinely succeeded); `repair`
+// is the accounting block; the LLM never touches `result.status`.
+function runRepairLoop(env, ctx) {
+  const { config, budget } = ctx;
+  const attempts = [];          // accounting + attemptHistory fed back to provider
+  const seenTriples = [resultTriple(ctx.result)];
+  let current = ctx.result;     // latest failed engine result
+  let final = ctx.result;       // pushed result (engine-measured)
+  let origin = 'first-try';
+  let outcome = 'unrepaired';
+  let winningAction = null;
+  let terminalCause = null;
+
+  for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
+    if (budget.remaining() <= 0) { env.log(`repair budget exhausted; stopping ${ctx.id}`); break; }
+    budget.spend();
+
+    const sel = current.root || ctx.failSelector || (current.causeSignals && current.causeSignals.selector) || null;
+    const relShot = `repair/${ctx.id}.attempt-${attempt}.png`;
+    const screenshot = env.screenshot(sel, relShot);
+    const repairContext = env.repairContext(sel);
+    const input = buildRepairInput({
+      capture: ctx.capture, type: ctx.type, id: ctx.id, url: ctx.url, viewport: ctx.viewport,
+      result: current, attempt, screenshot, repairContext, map: ctx.map, attemptHistory: attempts,
+    });
+    const inputPath = env.writeInput(input, attempt);
+    const validated = validateRepairOutput(env.callProvider(inputPath));
+
+    if (!validated.valid) {
+      env.log(`repair ${ctx.id} attempt ${attempt}: invalid provider output (${validated.error}) -> terminal`);
+      outcome = 'terminal'; terminalCause = 'provider_error';
+      attempts.push({ action: 'terminal_give_up', params: { terminalCause: 'provider_error', error: validated.error }, confidence: null, resultStatus: null, resultCause: null });
+      break;
+    }
+
+    const repair = validated.repair;
+    const kind = repair.action.kind;
+
+    if (kind === 'terminal_give_up') {
+      outcome = 'terminal'; terminalCause = normalizeTerminalCause(repair.action.terminalCause);
+      attempts.push({ action: kind, params: repair.action, confidence: repair.confidence, resultStatus: null, resultCause: null });
+      env.log(`repair ${ctx.id} attempt ${attempt}: provider terminal_give_up(${terminalCause})`);
+      break;
+    }
+
+    if (repair.confidence < config.confidenceFloor) {
+      env.log(`repair ${ctx.id} attempt ${attempt}: confidence ${repair.confidence} < floor ${config.confidenceFloor}; not spending a retry`);
+      outcome = 'unrepaired';
+      final.lowConfidenceDiagnosis = repair.diagnosis || null;
+      attempts.push({ action: kind, params: repair.action, confidence: repair.confidence, resultStatus: 'skipped-low-confidence', resultCause: null });
+      break;
+    }
+
+    const fresh = isStatefulRepairKind(kind);
+    const cloned = applyRepair(ctx.capture, ctx.type, repair.action);
+    let recaptured;
+    try {
+      recaptured = env.recapture(cloned, ctx.type, ctx.id, fresh);
+    } catch (error) {
+      recaptured = { id: ctx.id, type: ctx.type, status: 'error', error: String(error.message || error), findings: 0, cause: 'other' };
+    }
+    attempts.push({ action: kind, params: repair.action, confidence: repair.confidence, resultStatus: recaptured.status, resultCause: recaptured.cause || null });
+
+    if (meetsSuccess(recaptured, repair.successCriterion)) {
+      outcome = 'ok-after-repair'; winningAction = kind; origin = 'after-repair';
+      recaptured.page = final.page;   // preserve page provenance shape
+      final = recaptured;
+      env.log(`repair ${ctx.id} attempt ${attempt}: ${kind} succeeded -> ${recaptured.status}`);
+      break;
+    }
+
+    const triple = resultTriple(recaptured);
+    if (seenTriples.includes(triple)) {
+      env.log(`repair ${ctx.id} attempt ${attempt}: repeated-identical (${triple}); not converging -> terminal`);
+      outcome = 'terminal';
+      // Not converging: honest terminal. Inert if nothing animatable was found.
+      const animatable = repairContext && repairContext.animatableHere
+        && (repairContext.animatableHere.selfHover || repairContext.animatableHere.pseudoHover
+          || repairContext.animatableHere.childAnimated || repairContext.animatableHere.scrollTriggerBound);
+      const occluded = recaptured.causeSignals && recaptured.causeSignals.occludedBy;
+      terminalCause = (!animatable && !occluded) ? 'genuinely_inert' : 'needs_human';
+      current = recaptured;
+      break;
+    }
+    seenTriples.push(triple);
+    current = recaptured;
+  }
+
+  const repairBlock = {
+    attempted: true,
+    attempts,
+    winningAction,
+    outcome,
+    terminalCause: outcome === 'terminal' ? terminalCause : null,
+  };
+  return { result: final, repair: repairBlock, origin };
+}
+
+// External-command provider transport (design §5, mirrors runBrowser): run
+// `<command> <input.json path>`; the command writes its output JSON and prints
+// that path on stdout. Returns the parsed object, or null on any failure (the
+// caller maps null -> terminal_give_up(provider_error)). Never throws.
+function invokeRepairProvider(command, inputPath, runDir) {
+  try {
+    const res = spawnSync(`${command} ${shellQuote(inputPath)}`, {
+      cwd: process.cwd(),
+      shell: true,
+      encoding: 'utf8',
+      maxBuffer: DEFAULT_MAX_OUTPUT + 200_000,
+    });
+    if (res.status !== 0) {
+      if (runDir) appendLog(runDir, `\nRepair provider exited ${res.status}: ${(res.stderr || '').trim()}\n`);
+      return null;
+    }
+    const printed = String(res.stdout || '').trim().split('\n').filter(Boolean).pop();
+    if (!printed) return null;
+    const candidates = [
+      path.isAbsolute(printed) ? printed : null,
+      path.resolve(process.cwd(), printed),
+      path.resolve(path.dirname(inputPath), printed),
+    ].filter(Boolean);
+    const outPath = candidates.find(p => fs.existsSync(p));
+    if (!outPath) {
+      if (runDir) appendLog(runDir, `\nRepair provider output not found at: ${printed}\n`);
+      return null;
+    }
+    return JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  } catch (error) {
+    if (runDir) appendLog(runDir, `\nRepair provider error: ${error.message || error}\n`);
+    return null;
+  }
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 function loadManifest(runDir, manifestPath) {
   let file = manifestPath ? path.resolve(manifestPath) : path.join(runDir, 'manifest.json');
   if (manifestPath && !fs.existsSync(file) && !path.isAbsolute(manifestPath)) {
@@ -1172,8 +1448,44 @@ function timelineResult(runDir, id, type, file, timeline) {
     timelineRef: path.relative(runDir, file),
     summary: timeline.summary,
     findings: timeline.findings?.length || 0,
+    // The selectors that actually moved (for the repair successCriterion
+    // onSelector check). In-memory only; not serialized to capture-results.json.
+    movedSelectors: Array.isArray(timeline.findings) ? timeline.findings.map(f => f && f.selector).filter(Boolean) : [],
     stop: timeline.meta?.terminationReason || null,
   };
+}
+
+// The settle->scrollintoview->arm->trigger->wait->dump recipe, run against the
+// currently-open page. Shared verbatim by the first-try capture path and the
+// repair re-run, so no second measurement path exists (design §1). Assumes a
+// page is already open and ready; never opens or manages reuse state.
+function executeRecipe(runDir, capture, type, id) {
+  runMaybeAction(capture.setupAction || capture.beforeAction, runDir);
+  const action = defaultAction(capture, type);
+  const actionSelector = selectorFromAction(action);
+  const scrollTarget = capture.scrollTarget || capture.root || actionSelector;
+  const preflights = [];
+  if (scrollTarget && type !== 'scroll' && type !== 'scroll-reveal') {
+    const presence = preflightPresence(runDir, scrollTarget, actionLabel(action, type, 'scroll target'), capture);
+    if (presence) preflights.push(presence);
+    runBrowser(['scrollintoview', scrollTarget], { runDir });
+    runBrowser(['wait', String(capture.settleMs || 250)], { runDir });
+  }
+  if (type === 'hover') {
+    runBrowser(['mouse', 'move', '1', '1'], { runDir });
+  }
+  const arm = defaultArm(capture, type, id);
+  if (arm) evalStatement(arm, runDir);
+  const actionPreflight = preflightAction(runDir, action, capture);
+  if (actionPreflight) preflights.push(actionPreflight);
+  if (action) runAction(action, runDir);
+  const waitMs = capture.waitMs == null ? 1200 : Number(capture.waitMs);
+  runBrowser(['wait', String(waitMs)], { runDir });
+  const timeline = evalJson('(() => window.__cap.dump({ copy: false }))()', runDir);
+  const file = saveTimeline(runDir, id, timeline);
+  const result = timelineResult(runDir, id, type, file, timeline);
+  if (preflights.length) result.preflight = preflights.length === 1 ? preflights[0] : preflights;
+  return result;
 }
 
 function captureStrategy(manifest = {}, flags = {}) {
@@ -1315,6 +1627,66 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
   const results = [];
   let currentPage = null;
 
+  // ── Capture-repair loop wiring (design §1, §5). Inert when no provider is
+  // configured: repairCfg === null means the loop never runs and soft-fail
+  // behavior is byte-identical. ──
+  const repairCfg = repairConfig(manifest, flags);
+  const repairableCount = captures.filter(c => !(c.skip || c.enabled === false)).length;
+  const repairBudgetTotal = repairCfg
+    ? Math.min(repairCfg.budget != null ? repairCfg.budget : REPAIR_DEFAULTS.budgetMultiplier * repairableCount, REPAIR_DEFAULTS.budgetCeiling)
+    : 0;
+  let repairSpent = 0;
+  const repairBudget = { total: repairBudgetTotal, spend: () => { repairSpent += 1; }, remaining: () => repairBudgetTotal - repairSpent };
+  if (repairCfg) {
+    appendLog(runDir, `\nRepair loop armed: cmd=\`${repairCfg.command}\` maxRetries=${repairCfg.maxRetries} budget=${repairBudgetTotal} causes=[${repairCfg.repairableCauses.join(', ')}]\n`);
+  }
+
+  // Re-run the recipe for a repair. M1 (design §11): stateful repairs (fresh)
+  // re-open a clean page so the precondition starts from REST, and clear the
+  // reuse state so the mutation cannot leak into later reuse-page captures.
+  const recaptureForRepair = (cloned, type, id, fresh) => {
+    if (fresh) {
+      const rurl = cloned.url || manifest.url;
+      openPage(runDir, rurl, viewport, [ENGINE], { openDelayMs: openDelayMs(manifest, flags, cloned) });
+      waitForPageReady(runDir, `repair:${id}:open`, manifest, flags, cloned);
+      runBrowser(['wait', String(cloned.initialWaitMs || manifest.captureInitialWaitMs || 1000)], { runDir });
+      currentPage = null;   // M1: a fresh stateful repair must not leak into N+1
+    }
+    const r = executeRecipe(runDir, cloned, type, id);
+    const cloneSel = cloned.root || selectorFromAction(defaultAction(cloned, type)) || cloned.selector || null;
+    attachCause(r, cloned, type, { selector: cloneSel });
+    return r;
+  };
+
+  const repairEnv = repairCfg ? {
+    log: (msg) => appendLog(runDir, `\n[repair] ${msg}\n`),
+    screenshot: (sel, relPath) => captureRepairScreenshot(runDir, sel, relPath),
+    repairContext: (sel) => runRepairContext(runDir, sel),
+    writeInput: (input, attempt) => writeRepairInput(runDir, input.captureId, attempt, input),
+    callProvider: (inputPath) => invokeRepairProvider(repairCfg.command, inputPath, runDir),
+    recapture: recaptureForRepair,
+  } : null;
+
+  // Returns the result object to push. Runs the repair loop only for a
+  // repairable empty/error; otherwise stamps origin and returns the result
+  // unchanged.
+  const maybeRepair = (result, capture, type, id, failSelector) => {
+    const repairable = repairCfg
+      && (result.status === 'empty' || result.status === 'error')
+      && repairCfg.repairableCauses.includes(result.cause);
+    if (repairable) {
+      const out = runRepairLoop(repairEnv, {
+        capture, type, id, url: capture.url || manifest.url, viewport, map,
+        result, config: repairCfg, budget: repairBudget, failSelector,
+      });
+      out.result.origin = out.origin;
+      out.result.repair = out.repair;
+      return out.result;
+    }
+    if (!result.origin) result.origin = 'first-try';
+    return result;
+  };
+
   for (const [index, capture] of captures.entries()) {
     const id = captureId(capture, index);
     const type = captureType(capture);
@@ -1352,6 +1724,7 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
           const result = timelineResult(runDir, id, type, file, timeline);
           result.page = { strategy: 'fresh', opened: true, group: null, seededReusablePage: false };
           attachCause(result, capture, type);
+          result.origin = 'first-try';   // boot/load captures are not routed to the repair loop
           results.push(result);
           if (strategy === 'reuse-page' && capture.seedReuse !== false && url === manifest.url) {
             const seededGroup = capture.seedGroup || 'main-page-after-intro';
@@ -1390,41 +1763,20 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       }
 
       if (canReuse) resetReusablePage(runDir, Object.assign({}, groupConfig, capture), type);
-      runMaybeAction(capture.setupAction || capture.beforeAction, runDir);
 
       const action = defaultAction(capture, type);
       const actionSelector = selectorFromAction(action);
       const scrollTarget = capture.scrollTarget || capture.root || actionSelector;
-      const preflights = [];
-      if (scrollTarget && type !== 'scroll' && type !== 'scroll-reveal') {
-        const presence = preflightPresence(runDir, scrollTarget, actionLabel(action, type, 'scroll target'), capture);
-        if (presence) preflights.push(presence);
-        runBrowser(['scrollintoview', scrollTarget], { runDir });
-        runBrowser(['wait', String(capture.settleMs || 250)], { runDir });
-      }
-      if (type === 'hover') {
-        runBrowser(['mouse', 'move', '1', '1'], { runDir });
-      }
-
-      const arm = defaultArm(capture, type, id);
-      if (arm) evalStatement(arm, runDir);
-      const actionPreflight = preflightAction(runDir, action, capture);
-      if (actionPreflight) preflights.push(actionPreflight);
-      if (action) runAction(action, runDir);
-      runBrowser(['wait', String(waitMs == null ? 1200 : waitMs)], { runDir });
-
-      const timeline = evalJson('(() => window.__cap.dump({ copy: false }))()', runDir);
-      const file = saveTimeline(runDir, id, timeline);
-      const result = timelineResult(runDir, id, type, file, timeline);
-      if (preflights.length) result.preflight = preflights.length === 1 ? preflights[0] : preflights;
+      const result = executeRecipe(runDir, capture, type, id);
       result.page = {
         strategy: canReuse ? 'reuse-page' : 'fresh',
         opened,
         group,
         seededBy: currentPage && currentPage.group === group ? currentPage.seededBy : null,
       };
-      attachCause(result, capture, type, { selector: capture.root || actionSelector || scrollTarget || null });
-      results.push(result);
+      const recipeSelector = capture.root || actionSelector || scrollTarget || null;
+      attachCause(result, capture, type, { selector: recipeSelector });
+      results.push(maybeRepair(result, capture, type, id, recipeSelector));
       if (capture.resetAction) {
         try {
           runAction(capture.resetAction, runDir);
@@ -1453,7 +1805,12 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       // Classify the failure. A blocked page can't be probed safely, so for a
       // fatal page-state error we classify from the reason string + map context.
       attachCause(errorResult, capture, type, { probe: !error.fatalPageState });
-      results.push(errorResult);
+      // A non-fatal error (e.g. occlusion preflight) leaves the page usable, so
+      // the repair loop can probe + re-run. A fatal page blocker cannot.
+      const errSelector = capture.root || selectorFromAction(defaultAction(capture, type)) || capture.selector || null;
+      const pushResult = error.fatalPageState ? errorResult : maybeRepair(errorResult, capture, type, id, errSelector);
+      if (!pushResult.origin) pushResult.origin = 'first-try';
+      results.push(pushResult);
       if (type === 'click' || type === 'dblclick' || capture.invalidatePageOnError === true) currentPage = null;
       if (error.fatalPageState) {
         for (const [offset, remaining] of captures.slice(index + 1).entries()) {
@@ -3188,5 +3545,19 @@ if (require.main === module) {
     vendorAnimationMatch,
     tagVendorAnimations,
     renderAnimationsMarkdown,
+    // Capture-repair loop (Part 6) — exported for browser-free, model-free tests.
+    runRepairLoop,
+    validateRepairOutput,
+    applyRepair,
+    meetsSuccess,
+    resultTriple,
+    isStatefulRepairKind,
+    repairConfig,
+    invokeRepairProvider,
+    buildRepairInput,
+    REPAIR_ACTION_KINDS,
+    TERMINAL_CAUSES,
+    DEFAULT_REPAIRABLE_CAUSES,
+    REPAIR_DEFAULTS,
   };
 }
