@@ -223,6 +223,10 @@ function ok(name, cond) {
   ok('meetsSuccess: empty fails moved', m.meetsSuccess({ status: 'empty' }, { expect: 'moved' }) === false);
   ok('meetsSuccess: onSelector enforced', m.meetsSuccess({ status: 'ok', movedSelectors: ['.a'] }, { expect: 'moved', onSelector: '.b' }) === false);
   ok('meetsSuccess: onSelector matched', m.meetsSuccess({ status: 'ok', movedSelectors: ['.b.x'] }, { expect: 'moved', onSelector: '.b.x' }) === true);
+  // Class-token match: engine finding selector carries extra classes, criterion
+  // names the specific one (the enerblock prev-arrow case from the headed e2e).
+  ok('meetsSuccess: class-token match across CSS-path shapes',
+    m.meetsSuccess({ status: 'ok', movedSelectors: ['div.carousel__arrow.carousel__arrow--prev'] }, { expect: 'moved', onSelector: 'div.carousel__arrow--prev' }) === true);
 }
 
 // ── external-command transport proof (no browser, no model) ──────────────────
