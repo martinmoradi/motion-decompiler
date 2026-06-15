@@ -504,6 +504,31 @@ grep -q 'empty-scroll' "$TMP_ASSEMBLE/report.md"
 grep -q 'Failed Captures' "$TMP_ASSEMBLE/report.md"
 grep -q 'failed-hover' "$TMP_ASSEMBLE/report.md"
 
+# --- calib-metrics reads the structured `cause` field (legacy keyword map is
+# --- only a fallback); map.dominantIframe populates wrong_document. -----------
+CAUSE_DIR="$(mktemp -d)"
+cat >"$CAUSE_DIR/map.json" <<'JSON'
+{ "libs": ["GSAP", "ScrollTrigger"],
+  "dominantIframe": { "src": "https://report.example.net/", "sameOrigin": false, "accessible": false, "areaRatio": 0.97 } }
+JSON
+cat >"$CAUSE_DIR/capture-results.json" <<'JSON'
+{ "capturedAt": "2026-06-15T00:00:00.000Z", "count": 4, "results": [
+  { "id": "u1", "type": "hover", "status": "empty", "cause": "pseudo_element", "summary": "no animation captured", "findings": 0 },
+  { "id": "shell", "type": "hover", "status": "error", "cause": "wrong_document_iframe", "error": "selector matched no visible elements", "findings": 0 },
+  { "id": "boot", "type": "boot", "status": "empty", "cause": "wrong_trigger_boot_vs_scroll", "summary": "no animation captured", "findings": 0 },
+  { "id": "legacy", "type": "hover", "status": "error", "error": "is covered by another element", "findings": 0 }
+] }
+JSON
+"$ROOT/bin/calib-metrics" "$CAUSE_DIR" --site cause-fixture >/dev/null
+jq -e '
+  .failure_causes.pseudo_element == 1 and
+  .failure_causes.wrong_document_iframe == 1 and
+  .failure_causes.wrong_trigger_boot_vs_scroll == 1 and
+  .failure_causes.occlusion == 1 and
+  .wrong_document == "https://report.example.net/"
+' "$CAUSE_DIR/metrics.json" >/dev/null
+rm -rf "$CAUSE_DIR"
+
 REUSE_MANIFEST="$TMP_ASSEMBLE/reuse-manifest.json"
 cat >"$REUSE_MANIFEST" <<JSON
 {

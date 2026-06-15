@@ -9,10 +9,11 @@
  *
  * This script applies NO model judgment. Every number is sourced from the run
  * artifacts (capture-results.json, animations.json/.md, map.json,
- * manifest.proposed.json, page-state.json) and every failure_cause bucket is
- * assigned by the documented keyword map in bucketCause() below. If a reason
- * string does not match any rule it lands in "other" — which is itself a
- * signal that the tool's failure reasons need to be richer.
+ * manifest.proposed.json, page-state.json). Each failure's bucket is read from
+ * the structured `cause` field the tool now emits per failed capture; only
+ * legacy runs without that field fall back to the documented keyword map in
+ * bucketCause() below. If neither yields a known bucket it lands in "other" —
+ * itself a signal that the tool's failure reasons need to be richer.
  *
  * Usage:
  *   bin/calib-metrics <run_dir> [--site <name>] [--url <url>] [--hard-fail <where>]
@@ -42,6 +43,19 @@ function readJSON(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
 }
 function len(x) { return Array.isArray(x) ? x.length : 0; }
+
+// Fixed failure-cause vocabulary (kept in sync with bin/motion-decompile).
+const FAILURE_CAUSES = [
+  'occlusion', 'hidden_not_visible', 'inert_representative', 'pseudo_element',
+  'wrong_trigger_boot_vs_scroll', 'wrong_document_iframe', 'vendor_animation', 'other',
+];
+
+// Prefer the structured `cause` the tool emits per failed capture; fall back to
+// the keyword map only for legacy runs that predate the classifier.
+function causeFor(result) {
+  if (result.cause && FAILURE_CAUSES.includes(result.cause)) return result.cause;
+  return bucketCause(result);
+}
 
 /*
  * Documented keyword map. Rules are checked top to bottom; first match wins.
@@ -181,7 +195,7 @@ const failureCauses = {
 const topFailures = [];
 for (const r of results) {
   if (r.status === 'ok' || r.status === 'check') continue;
-  const cause = bucketCause(r);
+  const cause = causeFor(r);
   failureCauses[cause]++;
   topFailures.push({
     id: r.id,
@@ -195,10 +209,15 @@ for (const r of results) {
 topFailures.sort((a, b) => (a.status === b.status ? a.id.localeCompare(b.id) : (a.status === 'error' ? -1 : 1)));
 
 // ---- wrong_document (iframe the tool flagged) -------------------------------
-// Forward-compatible: read whatever field a future iframe-detection fix emits.
-// Today the tool flags nothing, so this stays null even on the vwlab embed-shell.
+// Read the dominant-iframe finding the map/scout stage now emits (and the
+// cross-origin flag the planner stamps on the proposed manifest). Falls back to
+// older/looser field names so legacy runs still resolve a value where present.
 let wrongDocument = null;
 const ifaceCandidates = [
+  map && map.dominantIframe && (map.dominantIframe.src || map.dominantIframe),
+  map && map.recommendedTarget,
+  proposed && proposed.crossOriginIframe && (proposed.crossOriginIframe.src || proposed.crossOriginIframe),
+  manifest && manifest.crossOriginIframe && (manifest.crossOriginIframe.src || manifest.crossOriginIframe),
   map && (map.wrongDocument || map.crossOriginIframe || map.flaggedIframe),
   map && map.iframe && (map.iframe.src || map.iframe),
   map && Array.isArray(map.iframes) && map.iframes[0] && (map.iframes[0].src || map.iframes[0]),
