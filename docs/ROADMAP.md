@@ -145,10 +145,62 @@ Each behavior part ends by re-running the Part 0 harness and reporting the diff.
     New unit test `tests/decode-transform.test.js` (browser-free, wired into the
     smoke suite) covers both directions; smoke green. No Part 0 metric change
     expected (spec-correctness fix; hit% unaffected).
-- **Next:** Part 4 (recipes, ~2),
-  then Part 3 (sweep, no hit movement, do anytime). Part 5 (repair loop) handles
-  the genuine residual: modal-only elements, real occlusion (carousel arrow,
-  stack-card), hidden inner affordances.
+- **Part 4 — done** (c587d4a recipes, fb7cd68 tests). Three structural fixes,
+  no per-site literals: (a) split reveals on a ScrollTrigger stack plan as
+  individual `scroll-reveal` captures instead of one premature boot capture;
+  (b) reveal lead prefers transform/opacity and flags text-fragment width/height
+  reflow as noise; (c) accordion planning targets the visible header/toggle
+  (derives candidate toggle selectors from the body selector, scores header/icon
+  over the collapsible panel). node --check both files; smoke green with new
+  browser-free fixtures pinning all three (split routing, the
+  `item-bottom-content` -> `item-top` synthesis, the reflow-noise note).
+  - **Headed before/after:**
+    - flowfest accordion: was clicking `div.accordion-css__item-bottom-content`
+      -> occlusion error. Now clicks `div.accordion-css__item-top` -> **ok, 7
+      findings** (icon rotation + panel height). A clean error->ok flip.
+    - ashley boot reveal: was reporting text reflow (width 145.5->134.7px). Now
+      reports the real reveal (transform y 0->-102px) and notes 89 width/height
+      reflow findings ignored. **Quality win invisible to hit%** (the capture was
+      already counted ok; its CONTENT was poisoned, exactly the pattern Part 2.5
+      flagged).
+    - flowfest split reveals (speakers/community grid-lines): correctly re-routed
+      to `scroll-reveal` but still 0 findings. Codex inspected the live DOM and
+      found no measurable transform/opacity/clip/size motion on the hosts. This
+      is **site drift (correctly-routed-empty), not a recipe miss** -- same class
+      as the vwlab drift. The scroll-reveal path itself is validated by the new
+      ok/check captures in the granular split set, not by this inert named case.
+  - **Part 0 numbers (from Codex's Part 4 verification run):** baseline 28 att /
+    8 ok / 2 check (28.6% hit, 35.7% usable) -> 41 att / 12 ok / 5 check (29.3%
+    hit, 41.5% usable). **The +0.7pp hit delta is an artifact -- do not read it
+    as the result.** The denominator grew 28 -> 41 because each split host is now
+    its own scroll capture. Per methodology rule (never compare across the
+    change), hit% is no longer apples-to-apples with the 28-baseline. Honest read:
+    **+4 ok, +3 check in absolute terms**, and of the 13 new granular split
+    captures 7 are usable (~54% yield, ABOVE the baseline rate) -- healthy
+    granularization, not denominator padding. **41 is the new baseline
+    denominator.**
+  - **Open follow-ups (not blockers):**
+    1. Codex left the work uncommitted and did NOT update `SCOREBOARD.md`/per-site
+       notes. PM reviewed + committed the source and tests. The scoreboard still
+       shows the 28-baseline; it needs a clean Part 0 re-baseline run to record
+       the 41-denominator numbers (do not hand-edit the scoreboard from a verbal
+       report).
+    2. Split-host granularity: confirm the per-host scroll captures enrich the
+       spec rather than fragmenting one staggered reveal into up to 12 rows
+       (12-host cap). Check on the next Part 0 run by reading a couple of the new
+       split captures, not just the count.
+    3. Accordion selector synthesis is generic but a bet (it guesses
+       `item-top`/`-header` exist from the body selector). Pinned by the smoke
+       fixture; watch it on the next real Webflow accordion before trusting it
+       broadly.
+- **Next:** Part 3 (browser-free sweep: vendor de-rank + drawSVG grouping +
+  the hover/click label-bug fix; low risk, no browser, clears the last
+  deterministic items). Then a clean Part 0 re-baseline that also re-baselines
+  vwlab as whatever it now is (and decides keep-or-swap / add
+  report-vwlab.netlify.app), establishing the 41-denominator scoreboard. Then
+  Part 5 (repair-loop DESIGN checkpoint) for the genuine residual: modal-only
+  elements, real occlusion (carousel arrow, stack-card), hidden inner
+  affordances.
 
 ---
 
