@@ -670,6 +670,322 @@ function validCause(cause) {
   return FAILURE_CAUSES.includes(cause) ? cause : 'other';
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Capture-repair loop (Part 6 — design: docs/PART-5-repair-loop-design.md)
+//
+// The LLM decides WHAT/HOW/REPAIR; it NEVER measures motion. These structures
+// carry only selectors, action sequences, and a terminal verdict — there is no
+// field for a duration/easing/from-to, so a number cannot flow from the
+// provider into the spec. Whether a repair worked is decided ONLY by re-running
+// the same settle->arm->trigger->wait->dump recipe and reading the engine's
+// status/elementsMoved against the machine-checked successCriterion.
+// ───────────────────────────────────────────────────────────────────────────
+
+// Closed action enum (design §3). The provider may emit nothing outside this.
+const REPAIR_ACTION_KINDS = [
+  'retarget_selector', 'use_other_instance', 'scroll_into_view',
+  'precondition_action', 'retarget_iframe', 'terminal_give_up',
+];
+// Terminal verdict causes (design §3).
+const TERMINAL_CAUSES = [
+  'genuinely_inert', 'genuinely_absent', 'cross_origin_iframe',
+  'needs_human', 'provider_error',
+];
+// rootCause vocabulary = the Part 1 buckets, or "ambiguous" (design §3).
+const REPAIR_ROOT_CAUSES = FAILURE_CAUSES.concat(['ambiguous']);
+// Which classifier buckets enter the loop by default (design §5, PM ruling §11).
+// Narrow on purpose: Parts 2/4 already fixed pseudo_element + wrong_trigger;
+// Part 1 handles wrong_document_iframe at the dominant level.
+const DEFAULT_REPAIRABLE_CAUSES = ['occlusion', 'hidden_not_visible', 'inert_representative'];
+// Repair kinds that mutate page state. M1 (design §11): these MUST re-run on a
+// fresh page so they start from REST and cannot leak into later reuse-page
+// captures. `fresh:true` on the cloned capture forces the isolated re-open.
+const STATEFUL_REPAIR_KINDS = ['precondition_action', 'scroll_into_view', 'retarget_iframe'];
+const REPAIR_DEFAULTS = { maxRetries: 2, confidenceFloor: 0.4, budgetMultiplier: 2, budgetCeiling: 24 };
+
+function isStatefulRepairKind(kind) {
+  return STATEFUL_REPAIR_KINDS.includes(kind);
+}
+
+// Resolve the effective repair config from manifest + CLI flags. Returns null
+// when no provider command is configured — the loop is then INERT and the
+// current soft-fail behavior is byte-identical (design §1, §5).
+function repairConfig(manifest = {}, flags = {}) {
+  const block = (manifest && typeof manifest.repair === 'object' && manifest.repair) || {};
+  const command = flags.repairCmd || block.command || null;
+  if (!command) return null;
+  const causes = flags.repairCauses || block.repairableCauses || DEFAULT_REPAIRABLE_CAUSES;
+  return {
+    command,
+    maxRetries: finiteNumber(optionNumber(flags.repairMaxRetries, block.maxRetries), REPAIR_DEFAULTS.maxRetries),
+    confidenceFloor: finiteNumber(optionNumber(flags.repairConfidenceFloor, block.confidenceFloor), REPAIR_DEFAULTS.confidenceFloor),
+    budget: optionNumber(flags.repairBudget, block.budget) === undefined
+      ? null
+      : finiteNumber(optionNumber(flags.repairBudget, block.budget), null),
+    repairableCauses: Array.isArray(causes) ? causes.filter(c => REPAIR_ROOT_CAUSES.includes(c)) : DEFAULT_REPAIRABLE_CAUSES,
+  };
+}
+
+// Read-only structural probe of the failed target's neighborhood (design §2).
+// Same cost class as failureProbe: one evalJson, never mutates the page. Surfaces
+// the three things every repair shape keys on — other instances (each with its
+// own occluder), candidate triggers (for precondition repairs, aria-* first),
+// and whether anything here is animatable at all (the gate for an honest
+// terminal verdict, design §6/§7).
+function repairContextProbe(selector) {
+  return `(() => {
+    const selector = ${JSON.stringify(selector || null)};
+    const ANIM = /transform|opacity|filter|clip-path|clip|width|height|color|background|left|right|top|bottom|inset|translate|scale|rotate|margin|padding|\\ball\\b/;
+    const esc = v => (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v);
+    const cssPath = el => {
+      if (!el || el.nodeType !== 1) return '';
+      if (el.id) return '#' + esc(el.id);
+      const tag = el.tagName.toLowerCase();
+      const cls = Array.from(el.classList || []).slice(0, 3).map(c => '.' + esc(c)).join('');
+      return tag + cls;
+    };
+    const round = n => Math.round(n);
+    const rectOf = el => { const r = el.getBoundingClientRect(); return [round(r.left), round(r.top), round(r.width), round(r.height)]; };
+    const visibleOf = el => {
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0 && r.width > 1 && r.height > 1;
+    };
+    const occluderOf = el => {
+      if (!visibleOf(el)) return null;
+      const r = el.getBoundingClientRect();
+      const x = Math.max(1, Math.min(innerWidth - 1, r.left + r.width / 2));
+      const y = Math.max(1, Math.min(innerHeight - 1, r.top + r.height / 2));
+      const top = document.elementFromPoint(x, y);
+      if (top && top !== el && !el.contains(top) && !top.contains(el)) return cssPath(top);
+      return null;
+    };
+    const matchOf = (el, nth) => ({ nth, visible: visibleOf(el), rect: rectOf(el), display: getComputedStyle(el).display, occludedBy: occluderOf(el) });
+
+    const out = {
+      matches: [], ancestors: [], siblings: [], candidateTriggers: [],
+      animatableHere: { selfHover: false, pseudoHover: false, childAnimated: false, scrollTriggerBound: false },
+    };
+
+    let matches = [];
+    if (selector) { try { matches = Array.from(document.querySelectorAll(selector)); } catch (e) { matches = []; } }
+    matches.slice(0, 12).forEach((el, nth) => out.matches.push(matchOf(el, nth)));
+    const primary = matches.find(visibleOf) || matches[0] || null;
+
+    if (primary) {
+      let p = primary.parentElement, depth = 0;
+      while (p && depth < 6) {
+        const cs = getComputedStyle(p);
+        out.ancestors.push({
+          tag: p.tagName.toLowerCase(),
+          classes: Array.from(p.classList || []).slice(0, 4),
+          role: p.getAttribute('role'),
+          cursorPointer: cs.cursor === 'pointer',
+          ariaHidden: p.getAttribute('aria-hidden'),
+          ariaControls: p.getAttribute('aria-controls'),
+          ariaExpanded: p.getAttribute('aria-expanded'),
+        });
+        p = p.parentElement; depth++;
+      }
+      if (primary.parentElement) {
+        Array.from(primary.parentElement.children).filter(c => c !== primary).slice(0, 8)
+          .forEach(c => out.siblings.push(Object.assign({ selector: cssPath(c) }, matchOf(c, -1))));
+      }
+    }
+
+    // Candidate triggers: aria-controls/haspopup/expanded are the highest-signal
+    // opener hints, then proximity over a bounded affordance net (no full-DOM
+    // cursor scan). opensTarget flags when the aria-controls id maps to the
+    // target/its ancestor — the strongest precondition-opener evidence.
+    const anchor = (() => {
+      if (primary) { const r = primary.getBoundingClientRect(); if (r.width || r.height) return r; }
+      for (const a of out.ancestors) { if (a.rect && (a.rect[2] || a.rect[3])) return { left: a.rect[0], top: a.rect[1], width: a.rect[2], height: a.rect[3] }; }
+      return { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
+    })();
+    const cx = anchor.left + anchor.width / 2, cy = anchor.top + anchor.height / 2;
+    const controlsTarget = el => {
+      const ids = (el.getAttribute('aria-controls') || '').split(/\\s+/).filter(Boolean);
+      for (const id of ids) {
+        const t = document.getElementById(id);
+        if (t && (t === primary || (primary && (t.contains(primary) || primary.contains(t))))) return true;
+      }
+      return false;
+    };
+    const seen = new Set();
+    const pushTrigger = (el, opensTarget, priority) => {
+      if (!el || el.nodeType !== 1 || !visibleOf(el)) return;
+      const sel = cssPath(el);
+      if (!sel || seen.has(sel)) return;
+      seen.add(sel);
+      const r = el.getBoundingClientRect();
+      out.candidateTriggers.push({
+        selector: sel,
+        text: ((el.innerText || el.textContent || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()).slice(0, 60),
+        rect: [round(r.left), round(r.top), round(r.width), round(r.height)],
+        opensTarget,
+        _d: Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy),
+        _p: priority,
+      });
+    };
+    let ariaEls = [];
+    try { ariaEls = Array.from(document.querySelectorAll('[aria-controls],[aria-haspopup],[aria-expanded]')); } catch (e) {}
+    ariaEls.forEach(el => pushTrigger(el, controlsTarget(el) ? 'aria-controls-match' : 'aria', 0));
+    let affordances = [];
+    try {
+      affordances = Array.from(document.querySelectorAll(
+        'a[href],button,[role=button],[onclick],[class*=btn],[class*=button],[class*=arrow],[class*=next],[class*=prev],[class*=toggle],[class*=trigger],[class*=open]'
+      ));
+    } catch (e) {}
+    affordances.forEach(el => {
+      if (seen.has(cssPath(el))) return;
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      const near = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy) < Math.max(innerWidth, innerHeight);
+      if (near || cs.cursor === 'pointer') pushTrigger(el, 'proximity', 1);
+    });
+    out.candidateTriggers.sort((a, b) => (a._p - b._p) || (a._d - b._d));
+    out.candidateTriggers = out.candidateTriggers.slice(0, 12).map(t => { delete t._d; delete t._p; return t; });
+
+    if (primary) {
+      for (const pseudo of ['::before', '::after']) {
+        let cs; try { cs = getComputedStyle(primary, pseudo); } catch (e) { continue; }
+        if (cs && cs.content && cs.content !== 'none' && cs.content !== 'normal' && (parseFloat(cs.transitionDuration) || 0) > 0 && ANIM.test(cs.transitionProperty || '')) {
+          out.animatableHere.pseudoHover = true;
+        }
+      }
+      const descendants = Array.from(primary.querySelectorAll('*')).slice(0, 200);
+      for (const d of descendants) {
+        const cs = getComputedStyle(d);
+        if (((parseFloat(cs.transitionDuration) || 0) > 0 && ANIM.test(cs.transitionProperty || '')) || (cs.animationName && cs.animationName !== 'none')) {
+          out.animatableHere.childAnimated = true; break;
+        }
+      }
+      const selfOrAncestor = base => base.split(',').map(s => s.trim()).filter(Boolean).some(b => {
+        try { return primary.matches(b) || !!primary.closest(b); } catch (e) { return false; }
+      });
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+        if (!rules) continue;
+        for (const rule of Array.from(rules)) {
+          const sel = rule.selectorText;
+          if (!sel || sel.indexOf(':hover') === -1) continue;
+          const decl = rule.style; if (!decl) continue;
+          if (!(decl.transition || decl.transitionProperty || ANIM.test(decl.cssText || ''))) continue;
+          const base = sel.replace(/::?(before|after)\\b/g, '').replace(/:hover/g, '');
+          if (!selfOrAncestor(base)) continue;
+          if (/::?(before|after)\\b/.test(sel)) out.animatableHere.pseudoHover = true; else out.animatableHere.selfHover = true;
+        }
+      }
+      try {
+        const ST = window.ScrollTrigger || (window.gsap && window.gsap.core && window.gsap.core.globals && window.gsap.core.globals().ScrollTrigger);
+        if (ST && typeof ST.getAll === 'function') {
+          out.animatableHere.scrollTriggerBound = ST.getAll().some(st => {
+            const t = st && (st.trigger || (st.vars && st.vars.trigger));
+            return t && t.nodeType === 1 && (t === primary || t.contains(primary) || primary.contains(t));
+          });
+        }
+      } catch (e) {}
+    }
+    return out;
+  })()`;
+}
+
+function runRepairContext(runDir, selector) {
+  try {
+    return evalJson(repairContextProbe(selector), runDir, 600_000);
+  } catch (error) {
+    appendLog(runDir, `\nRepair-context probe error: ${error.message || error}\n`);
+    return null;
+  }
+}
+
+// Viewport screenshot of the failed state (design §2/§11: viewport scope, with
+// the failed element scrolled into view first when it has a box). Returns the
+// run-relative path on success, null on failure (never throws into the loop).
+function captureRepairScreenshot(runDir, selector, relPath) {
+  const absPath = path.join(runDir, relPath);
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  try {
+    if (selector) {
+      try {
+        const presence = evalJson(selectorPresence(selector), runDir, 200_000);
+        if (presence && presence.matchCount > 0) runBrowser(['scrollintoview', selector], { runDir });
+      } catch (e) { /* best-effort; screenshot the viewport as-is */ }
+    }
+    runBrowser(['screenshot', absPath], { runDir });
+    return fs.existsSync(absPath) ? relPath : null;
+  } catch (error) {
+    appendLog(runDir, `\nRepair screenshot error: ${error.message || error}\n`);
+    return null;
+  }
+}
+
+// The recipe as it was run, for the diagnosis input. Pure structural echo —
+// carries no measurement.
+function failedRecipeOf(capture, type, id) {
+  const action = defaultAction(capture, type);
+  let arm = null;
+  try { arm = defaultArm(capture, type, id); } catch (e) { arm = null; }
+  return {
+    type,
+    selector: capture.selector || capture.target || capture.root || selectorFromAction(action) || null,
+    root: capture.root || null,
+    action: typeof action === 'string' ? action : (action ? JSON.stringify(action) : null),
+    arm,
+    beforeAction: capture.beforeAction || capture.setupAction || null,
+    waitMs: capture.waitMs == null ? 1200 : Number(capture.waitMs),
+  };
+}
+
+// A light, honest slice of map.json for the failed capture (design §2). Best
+// effort: where the selector shows up in the map, plus the planner's grouping.
+function mapSubtreeFor(map, capture, selector) {
+  const inList = (arr, key) => Array.isArray(arr) && arr.some(item => {
+    const v = typeof item === 'string' ? item : (item && (item[key] || item.sel || item.host));
+    return v && selector && String(v) === String(selector);
+  });
+  return {
+    group: capture.group || null,
+    label: capture.label || null,
+    section: (Array.isArray(map.splitReveals) && (map.splitReveals.find(r => r.host === selector) || {}).section) || null,
+    fromSplitReveal: inList(map.splitReveals, 'host'),
+    inHoverCandidates: Array.isArray(map.hoverCandidates) && map.hoverCandidates.includes(selector),
+    inCssHovers: inList(map.cssHovers, 'sel'),
+  };
+}
+
+// Assemble the diagnosis input (design §2). Reuses Part 1 cause + causeSignals
+// VERBATIM — the loop consumes the classifier's verdict, it does not re-diagnose.
+function buildRepairInput({ capture, type, id, url, viewport, result, attempt, screenshot, repairContext, map, attemptHistory }) {
+  return {
+    captureId: id,
+    attempt,
+    url,
+    viewport,
+    failure: {
+      status: result.status,
+      reason: String(result.error || result.summary || '').replace(/\s+/g, ' ').trim(),
+      cause: result.cause || null,
+      causeSignals: result.causeSignals || null,
+    },
+    failedRecipe: failedRecipeOf(capture, type, id),
+    screenshot,
+    mapSubtree: mapSubtreeFor(map || {}, capture, capture.root || capture.selector || null),
+    repairContext,
+    attemptHistory: Array.isArray(attemptHistory) ? attemptHistory : [],
+  };
+}
+
+function repairArtifactPath(runDir, id, attempt, ext) {
+  return path.join(runDir, 'repair', `${id}.attempt-${attempt}.${ext}`);
+}
+
+function writeRepairInput(runDir, id, attempt, input) {
+  const file = repairArtifactPath(runDir, id, attempt, 'input.json');
+  writeJson(file, input);
+  return file;
+}
+
 function loadManifest(runDir, manifestPath) {
   let file = manifestPath ? path.resolve(manifestPath) : path.join(runDir, 'manifest.json');
   if (manifestPath && !fs.existsSync(file) && !path.isAbsolute(manifestPath)) {
