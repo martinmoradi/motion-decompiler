@@ -489,6 +489,66 @@ jq -e '
   all(.captures[]; .root != "a" and .action != "hover a")
 ' "$TMP_ASSEMBLE/manifest.proposed.json" >/dev/null
 test -s "$TMP_ASSEMBLE/capture-plan.md"
+
+FLOW_PLAN="$TMP_ASSEMBLE/flow-plan"
+mkdir -p "$FLOW_PLAN"
+cat >"$FLOW_PLAN/manifest.json" <<'JSON'
+{
+  "url": "http://example.test/",
+  "viewport": [800, 600],
+  "captures": []
+}
+JSON
+cat >"$FLOW_PLAN/map.json" <<'JSON'
+{
+  "libs": ["GSAP", "ScrollTrigger"],
+  "scrollTriggers": [],
+  "cssHovers": [
+    {
+      "sel": "div.accordion-css__item-bottom-content",
+      "prop": "transform",
+      "dur": "0.5s",
+      "ease": "ease"
+    },
+    {
+      "sel": "div.accordion-css__item-icon",
+      "prop": "transform",
+      "dur": "0.5s",
+      "ease": "ease"
+    },
+    {
+      "sel": "svg.accordion-css__item-icon-svg",
+      "prop": "transform",
+      "dur": "0.5s",
+      "ease": "ease"
+    }
+  ],
+  "loops": [],
+  "splitReveals": [
+    {
+      "host": "div.speakers__grid-lines",
+      "section": "#speakers",
+      "count": 3,
+      "kinds": ["speakers__grid-lines-group"]
+    },
+    {
+      "host": "div.community__grid-lines",
+      "section": "section.community",
+      "count": 3,
+      "kinds": ["community__grid-lines-group"]
+    }
+  ],
+  "hoverCandidates": []
+}
+JSON
+"$ROOT/bin/motion-decompile" plan "$FLOW_PLAN" >/dev/null
+jq -e '
+  all(.captures[]; .id != "boot-load-reveals" and .type != "boot") and
+  any(.captures[]; .id == "split-reveal-0-div-speakers-grid-lines" and .type == "scroll-reveal" and .root == "div.speakers__grid-lines" and .action == "scrollintoview div.speakers__grid-lines") and
+  any(.captures[]; .id == "split-reveal-1-div-community-grid-lines" and .type == "scroll-reveal" and .root == "div.community__grid-lines" and .action == "scrollintoview div.community__grid-lines") and
+  any(.captures[]; .id == "accordion-click" and (.root | test("li\\.accordion-css__item")) and .action == "click div.accordion-css__item-top" and .scrollTarget == "div.accordion-css__item-top")
+' "$FLOW_PLAN/manifest.proposed.json" >/dev/null
+
 "$ROOT/bin/motion-decompile" assemble "$TMP_ASSEMBLE" >/dev/null
 jq -e '
   .meta.url == "http://example.test/" and
@@ -498,6 +558,95 @@ jq -e '
   any(.animations[]; .id == "empty-scroll" and .empty == true and .confidence == "unknown - verify")
 ' "$TMP_ASSEMBLE/animations.json" >/dev/null
 test -s "$TMP_ASSEMBLE/animations.md"
+
+LEAD_DIR="$TMP_ASSEMBLE/reflow-lead"
+mkdir -p "$LEAD_DIR/timelines"
+cat >"$LEAD_DIR/manifest.json" <<'JSON'
+{
+  "url": "http://example.test/",
+  "viewport": [800, 600],
+  "captures": [
+    {
+      "id": "boot-load-reveals",
+      "type": "boot",
+      "label": "Boot/load split reveal capture"
+    }
+  ]
+}
+JSON
+cat >"$LEAD_DIR/map.json" <<'JSON'
+{ "libs": ["GSAP", "ScrollTrigger"], "scrollTriggers": [], "cssHovers": [], "loops": [], "splitReveals": [] }
+JSON
+cat >"$LEAD_DIR/capture-results.json" <<'JSON'
+{
+  "capturedAt": "2026-06-15T00:00:00.000Z",
+  "count": 1,
+  "results": [
+    {
+      "id": "boot-load-reveals",
+      "type": "boot",
+      "status": "ok",
+      "timelineRef": "timelines/boot-load-reveals.json",
+      "summary": "Staggered text width reflow.",
+      "findings": 2
+    }
+  ]
+}
+JSON
+cat >"$LEAD_DIR/timelines/boot-load-reveals.json" <<'JSON'
+{
+  "meta": {
+    "source": "http://example.test/",
+    "libraries": ["GSAP", "ScrollTrigger"],
+    "mode": "boot",
+    "trigger": "load",
+    "terminationReason": "duration",
+    "rootSelector": "p",
+    "durationMs": 1200,
+    "elementsMoved": 2
+  },
+  "summary": "Staggered 1-item animation (e.g. split text): each item width: 145.5px -> 134.7px.",
+  "stagger": { "items": 1, "staggerMs": 0 },
+  "findings": [
+    {
+      "selector": "p",
+      "locator": { "text": "Headline copy" },
+      "type": "width",
+      "leadProperty": "width",
+      "properties": {
+        "width": {
+          "from": "145.5px",
+          "to": "134.7px",
+          "timing": { "duration": "1.2s (measured)", "easing": "unknown (rAF/JS) - verify" }
+        }
+      },
+      "timing": { "duration": "1.2s (measured)", "easing": "unknown (rAF/JS) - verify" }
+    },
+    {
+      "selector": "p.headline .word",
+      "type": "transform",
+      "leadProperty": "transform",
+      "properties": {
+        "transform": {
+          "from": { "x": 0, "y": 0, "scaleX": 1 },
+          "to": { "x": 0, "y": -80, "scaleX": 1 },
+          "timing": { "duration": "0.8s", "easing": "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+          "technique": "y 0->-80px"
+        }
+      },
+      "timing": { "duration": "0.8s", "easing": "cubic-bezier(0.2, 0.8, 0.2, 1)" }
+    }
+  ]
+}
+JSON
+"$ROOT/bin/motion-decompile" assemble "$LEAD_DIR" >/dev/null
+jq -e '
+  any(.animations[]; .id == "boot-load-reveals" and
+    .lead.from.transform.y == 0 and
+    .lead.to.transform.y == -80 and
+    (.notes | test("Ignored 1 text-fragment width/height reflow")))
+' "$LEAD_DIR/animations.json" >/dev/null
+
 "$ROOT/bin/motion-decompile" report "$TMP_ASSEMBLE" >/dev/null
 grep -q 'Page State' "$TMP_ASSEMBLE/report.md"
 grep -q 'timeout-loading' "$TMP_ASSEMBLE/report.md"
