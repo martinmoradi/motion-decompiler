@@ -306,7 +306,103 @@ Claude-in-Chrome Chrome. DPR 1.
 
 ---
 
-## 8. Open questions for the cross-checking agent  [CHECK]
+## 8. Local CLI skeleton
+
+`bin/motion-decompile` is the first repeatable local pipeline skeleton. It wraps
+`bin/capture-browser`, keeps the engine injected from
+`extension/capture-animation.js`, writes inspectable run artifacts, and
+assembles the section 4 spec contract from `map.json` plus saved timelines.
+
+Commands:
+
+```bash
+./bin/motion-decompile init https://mammothmurals.com/
+./bin/motion-decompile map runs/mammothmurals.com/2026-06-15-run
+./bin/motion-decompile plan runs/mammothmurals.com/2026-06-15-run
+./bin/motion-decompile capture runs/mammothmurals.com/2026-06-15-run manifest.json
+./bin/motion-decompile assemble runs/mammothmurals.com/2026-06-15-run
+./bin/motion-decompile report runs/mammothmurals.com/2026-06-15-run
+```
+
+Single-command run:
+
+```bash
+./bin/motion-decompile run manifest.json
+```
+
+Current artifact layout:
+
+```text
+runs/<domain>/<date>-<slug>/
+  map.json
+  manifest.json
+  manifest.proposed.json
+  capture-plan.json
+  capture-plan.md
+  capture-results.json
+  animations.json
+  animations.md
+  timelines/<capture-id>.json
+  report.md
+  run-log.md
+```
+
+Current manifest shape:
+
+```json
+{
+  "url": "https://mammothmurals.com/",
+  "viewport": [1280, 800],
+  "captures": [
+    {
+      "id": "faq-accordion",
+      "type": "click",
+      "root": "div.g_faq_item.w-dyn-item",
+      "action": "click div.g_faq_item.w-dyn-item",
+      "waitMs": 900
+    }
+  ]
+}
+```
+
+Supported capture types in v1: `hover`, `click`, `scroll` /
+`scroll-reveal`, and `boot` / `load`. Click and hover captures scroll the target
+into view, arm immediately before the real wrapper action, wait, then finalize
+with `dump({ copy:false })`. Boot captures create a temporary pre-engine init
+script that sets `window.__capAutoBoot`, open a fresh page, wait, and finalize
+with `bootDump({ copy:false })`.
+
+`plan` reads `map.json` and writes `manifest.proposed.json`,
+`capture-plan.json`, and `capture-plan.md`. It dedupes by capture signature and
+by hover mechanism. Current proposal classes:
+
+- boot capture for mapped split reveal hosts;
+- `scroll-reveal` captures for callback-only ScrollTriggers with a selector;
+- one tight accordion click when FAQ/accordion selectors are present;
+- one representative CSS hover per transition timing group;
+- a capped set of representative hover candidates such as work card, wordmark,
+  primary button, arrow row, nav link, and generic link.
+
+The plan output is a proposal, not an instruction to blindly capture everything.
+Review selectors in `capture-plan.md`, edit `manifest.proposed.json` if needed,
+then pass that manifest to `capture`.
+
+`assemble` creates `animations.json` and `animations.md`. It promotes
+registry-backed ScrollTrigger tweens, CSS loops, CSS hover timings, and split
+reveal hosts from `map.json`, then adds one animation entry for each saved
+timeline. It chooses a representative lead layer from each timeline, preferring
+height motion for click captures so accordions do not get summarized by their
+label text.
+
+The assembler is deliberately conservative. Registry-backed tweens and CSS
+loops are `measured`; callback-only ScrollTriggers, CSS hover timing entries
+without live deltas, split reveal hosts, and timeline captures with unreadable
+easing are `unknown - verify`. Manifest entries may override label, mechanism,
+patternId, notes, confidence, and tokens when a run has hand-authored context.
+
+---
+
+## 9. Open questions for the cross-checking agent  [CHECK]
 
 1. **`map()` in the engine vs the skill.** It is currently in the engine (single
    source of truth, both phases inject it). Is that the right home, or should

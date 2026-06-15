@@ -1,0 +1,1393 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const ROOT = path.resolve(__dirname, '..');
+const AB = path.join(ROOT, 'bin', 'capture-browser');
+const ENGINE = path.join(ROOT, 'extension', 'capture-animation.js');
+const DEFAULT_VIEWPORT = [1280, 800];
+const DEFAULT_MAX_OUTPUT = 5_000_000;
+
+function usage() {
+  console.log(`motion-decompile
+
+Usage:
+  bin/motion-decompile init <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--no-open]
+  bin/motion-decompile map <run-dir>
+  bin/motion-decompile plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
+  bin/motion-decompile capture <run-dir> [manifest.json]
+  bin/motion-decompile assemble <run-dir>
+  bin/motion-decompile report <run-dir>
+  bin/motion-decompile run <manifest.json> [--slug name] [--runs-dir runs]
+
+Manifest capture examples:
+  { "id": "work-card-hover", "type": "hover", "root": "a.work_home_item_link", "waitMs": 1200 }
+  { "id": "faq-accordion", "type": "click", "root": "div.g_faq_item.w-dyn-item", "action": "click div.g_faq_item.w-dyn-item", "waitMs": 900 }
+  { "id": "hero-load", "type": "boot", "boot": { "selectors": ["h1", "[class*=split]"], "ms": 4000 }, "waitMs": 4300 }
+`);
+}
+
+function parseFlags(argv) {
+  const flags = {};
+  const positionals = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--viewport') {
+      flags.viewport = parseViewport(argv[++i]);
+    } else if (arg === '--slug') {
+      flags.slug = argv[++i];
+    } else if (arg === '--runs-dir') {
+      flags.runsDir = argv[++i];
+    } else if (arg === '--out') {
+      flags.out = argv[++i];
+    } else if (arg === '--max-hover-captures') {
+      flags.maxHoverCaptures = Number(argv[++i]);
+    } else if (arg === '--no-open') {
+      flags.noOpen = true;
+    } else if (arg === '--help' || arg === '-h') {
+      flags.help = true;
+    } else if (arg.startsWith('--')) {
+      throw new Error(`Unknown option: ${arg}`);
+    } else {
+      positionals.push(arg);
+    }
+  }
+  return { flags, positionals };
+}
+
+function parseViewport(value) {
+  if (!value) return DEFAULT_VIEWPORT;
+  const match = String(value).match(/^(\d+)[x,](\d+)$/);
+  if (!match) throw new Error(`Invalid viewport "${value}". Use WIDTHxHEIGHT, for example 1280x800.`);
+  return [Number(match[1]), Number(match[2])];
+}
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function writeJson(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function slugify(value) {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'run';
+}
+
+function runDirFor(url, flags = {}) {
+  const parsed = new URL(url);
+  const host = parsed.host.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+  const urlSlug = slugify(flags.slug || parsed.pathname || 'run');
+  const base = path.resolve(process.cwd(), flags.runsDir || 'runs', host, `${today()}-${urlSlug}`);
+  if (!fs.existsSync(base)) return base;
+  for (let i = 2; i < 1000; i += 1) {
+    const candidate = `${base}-${i}`;
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error(`Could not find a free run directory near ${base}`);
+}
+
+function ensureRunDir(runDir) {
+  fs.mkdirSync(path.join(runDir, 'timelines'), { recursive: true });
+  const log = path.join(runDir, 'run-log.md');
+  if (!fs.existsSync(log)) {
+    fs.writeFileSync(log, `# motion-decompile run log\n\nStarted: ${new Date().toISOString()}\n\n`);
+  }
+}
+
+function appendLog(runDir, line) {
+  if (!runDir) return;
+  ensureRunDir(runDir);
+  fs.appendFileSync(path.join(runDir, 'run-log.md'), `${line}\n`);
+}
+
+function quote(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9_./:@=+-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function formatCommand(args) {
+  const formatted = args.map((arg, index) => {
+    if (index === 1 && args[0] === 'eval' && String(arg).length > 160) {
+      return quote(`${String(arg).slice(0, 157)}...`);
+    }
+    return quote(arg);
+  });
+  return `./bin/capture-browser ${formatted.join(' ')}`;
+}
+
+function runBrowser(args, options = {}) {
+  appendLog(options.runDir, `- ${new Date().toISOString()} \`${formatCommand(args)}\``);
+  const result = spawnSync(AB, args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    maxBuffer: options.maxBuffer || DEFAULT_MAX_OUTPUT + 200_000,
+  });
+  if (result.status !== 0) {
+    const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim();
+    throw new Error(`Browser command failed: ${formatCommand(args)}${detail ? `\n${detail}` : ''}`);
+  }
+  return result.stdout.trim();
+}
+
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function parseJsonOutput(stdout) {
+  const text = stdout.trim();
+  if (!text) return null;
+  let value = JSON.parse(text);
+  if (typeof value === 'string') {
+    const inner = value.trim();
+    if ((inner.startsWith('{') && inner.endsWith('}')) || (inner.startsWith('[') && inner.endsWith(']'))) {
+      value = JSON.parse(inner);
+    }
+  }
+  return value;
+}
+
+function evalJson(js, runDir, maxOutput = DEFAULT_MAX_OUTPUT) {
+  return parseJsonOutput(runBrowser(['eval', js, '--max-output', String(maxOutput)], {
+    runDir,
+    maxBuffer: maxOutput + 200_000,
+  }));
+}
+
+function evalStatement(js, runDir) {
+  const body = String(js).trim().replace(/;+$/, '');
+  evalJson(`(() => { ${body}; return { ok: true }; })()`, runDir, 200_000);
+}
+
+function loadManifest(runDir, manifestPath) {
+  let file = manifestPath ? path.resolve(manifestPath) : path.join(runDir, 'manifest.json');
+  if (manifestPath && !fs.existsSync(file) && !path.isAbsolute(manifestPath)) {
+    file = path.join(runDir, manifestPath);
+  }
+  if (!fs.existsSync(file)) throw new Error(`Manifest not found: ${file}`);
+  return { file, manifest: readJson(file) };
+}
+
+function normalizeViewport(manifest, flags = {}) {
+  if (flags.viewport) return flags.viewport;
+  if (Array.isArray(manifest.viewport) && manifest.viewport.length === 2) {
+    return [Number(manifest.viewport[0]), Number(manifest.viewport[1])];
+  }
+  return DEFAULT_VIEWPORT;
+}
+
+function openPage(runDir, url, viewport, initScripts = [ENGINE]) {
+  runBrowser(['close', '--all'], { runDir });
+  sleepMs(350);
+  const args = ['open', url, '--headed'];
+  for (const script of initScripts) args.push('--init-script', script);
+  runBrowser(args, { runDir });
+  runBrowser(['set', 'viewport', String(viewport[0]), String(viewport[1])], { runDir });
+}
+
+function splitAction(action) {
+  const text = String(action || '').trim();
+  const match = text.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  if (!match) throw new Error('Empty capture action');
+  return { command: match[1], rest: (match[2] || '').trim() };
+}
+
+function selectorFromAction(action) {
+  if (!action) return null;
+  const { command, rest } = splitAction(action);
+  if (['click', 'dblclick', 'hover', 'focus', 'scrollintoview'].includes(command)) return rest;
+  return null;
+}
+
+function runAction(action, runDir) {
+  if (!action) return;
+  if (Array.isArray(action)) {
+    for (const item of action) runAction(item, runDir);
+    return;
+  }
+  if (typeof action === 'object') {
+    if (action.eval) {
+      evalStatement(action.eval, runDir);
+    } else if (action.waitMs != null) {
+      runBrowser(['wait', String(action.waitMs)], { runDir });
+    } else if (action.command) {
+      runAction([action.command, action.selector, action.value].filter(Boolean).join(' '), runDir);
+    } else {
+      throw new Error(`Unsupported action object: ${JSON.stringify(action)}`);
+    }
+    return;
+  }
+
+  const { command, rest } = splitAction(action);
+  if (['click', 'dblclick', 'hover', 'focus', 'scrollintoview'].includes(command)) {
+    if (!rest) throw new Error(`Action "${command}" requires a selector`);
+    runBrowser([command, rest], { runDir });
+  } else if (command === 'wait') {
+    runBrowser(['wait', rest || '0'], { runDir });
+  } else if (command === 'eval') {
+    evalStatement(rest, runDir);
+  } else if (command === 'press') {
+    runBrowser(['press', rest], { runDir });
+  } else if (command === 'scroll') {
+    runBrowser(['scroll', ...rest.split(/\s+/).filter(Boolean)], { runDir });
+  } else if (command === 'mouse') {
+    runBrowser(['mouse', ...rest.split(/\s+/).filter(Boolean)], { runDir });
+  } else {
+    throw new Error(`Unsupported action command: ${command}`);
+  }
+}
+
+function captureId(capture, index) {
+  return slugify(capture.id || `capture-${index + 1}`);
+}
+
+function captureType(capture) {
+  return String(capture.type || (capture.action ? splitAction(capture.action).command : 'manual')).toLowerCase();
+}
+
+function defaultAction(capture, type) {
+  if (capture.action) return capture.action;
+  const target = capture.target || capture.selector || capture.root;
+  if (!target) return null;
+  if (type === 'click') return `click ${target}`;
+  if (type === 'hover') return `hover ${target}`;
+  if (type === 'scroll' || type === 'scroll-reveal') return `scrollintoview ${target}`;
+  return null;
+}
+
+function defaultArm(capture, type, id) {
+  if (capture.arm === false) return null;
+  if (capture.arm) return capture.arm;
+  const target = capture.root || capture.selector || selectorFromAction(capture.action);
+  if (!target) throw new Error(`Capture "${id}" needs root, selector, action, or arm`);
+  const trigger = type === 'click' ? 'manual' : (type === 'scroll-reveal' ? 'scroll' : type);
+  return `window.__cap.scan(${JSON.stringify(target)}, { trigger: ${JSON.stringify(trigger)}, captureSource: ${JSON.stringify(id)} })`;
+}
+
+function bootInitFile(capture, id) {
+  const boot = Object.assign({}, capture.boot || {});
+  if (capture.selectors) boot.selectors = capture.selectors;
+  if (capture.ms != null) boot.ms = capture.ms;
+  if (capture.max != null) boot.max = capture.max;
+  if (!boot.ms) boot.ms = capture.waitMs ? Math.max(100, Number(capture.waitMs) - 300) : 4000;
+  const file = path.join(os.tmpdir(), `motion-decompile-boot-${process.pid}-${id}.js`);
+  fs.writeFileSync(file, `window.__capAutoBoot = ${JSON.stringify(boot, null, 2)};\n`);
+  return { file, boot };
+}
+
+function saveTimeline(runDir, id, timeline) {
+  const file = path.join(runDir, 'timelines', `${id}.json`);
+  writeJson(file, timeline);
+  return file;
+}
+
+function runMap(runDir, manifest, flags = {}) {
+  const viewport = normalizeViewport(manifest, flags);
+  openPage(runDir, manifest.url, viewport, [ENGINE]);
+  runBrowser(['wait', String(manifest.initialWaitMs || 1000)], { runDir });
+  const map = evalJson('(() => window.__cap.map())()', runDir);
+  writeJson(path.join(runDir, 'map.json'), map);
+  appendLog(runDir, `\nSaved map: \`map.json\`\n`);
+  return map;
+}
+
+function runCapture(runDir, manifest, manifestFile) {
+  const viewport = normalizeViewport(manifest);
+  const captures = Array.isArray(manifest.captures) ? manifest.captures : [];
+  if (!captures.length) throw new Error('Manifest has no captures.');
+  writeJson(path.join(runDir, 'manifest.json'), manifest);
+  appendLog(runDir, `\nUsing manifest: \`${manifestFile || path.join(runDir, 'manifest.json')}\`\n`);
+
+  const results = [];
+  captures.forEach((capture, index) => {
+    const id = captureId(capture, index);
+    if (capture.skip || capture.enabled === false) {
+      appendLog(runDir, `\n## Capture ${id}\n\nSkipped: ${capture.reason || 'marked skipped'}\n`);
+      return;
+    }
+    const type = captureType(capture);
+    const url = capture.url || manifest.url;
+    const waitMs = capture.waitMs == null ? null : Number(capture.waitMs);
+    appendLog(runDir, `\n## Capture ${id}\n\nType: \`${type}\`\n`);
+
+    if (type === 'boot' || type === 'load') {
+      const init = bootInitFile(capture, id);
+      try {
+        openPage(runDir, url, viewport, [init.file, ENGINE]);
+        runBrowser(['wait', String(waitMs == null ? init.boot.ms + 300 : waitMs)], { runDir });
+        const timeline = evalJson('(() => window.__cap.bootDump({ copy: false }))()', runDir);
+        const file = saveTimeline(runDir, id, timeline);
+        results.push({ id, type, file, summary: timeline.summary, findings: timeline.findings?.length || 0 });
+      } finally {
+        fs.rmSync(init.file, { force: true });
+      }
+      return;
+    }
+
+    openPage(runDir, url, viewport, [ENGINE]);
+    runBrowser(['wait', String(capture.initialWaitMs || manifest.captureInitialWaitMs || 1000)], { runDir });
+
+    const action = defaultAction(capture, type);
+    const actionSelector = selectorFromAction(action);
+    const scrollTarget = capture.scrollTarget || capture.root || actionSelector;
+    if (scrollTarget && type !== 'scroll' && type !== 'scroll-reveal') {
+      runBrowser(['scrollintoview', scrollTarget], { runDir });
+      runBrowser(['wait', String(capture.settleMs || 250)], { runDir });
+    }
+    if (type === 'hover') {
+      runBrowser(['mouse', 'move', '1', '1'], { runDir });
+    }
+
+    const arm = defaultArm(capture, type, id);
+    if (arm) evalStatement(arm, runDir);
+    if (action) runAction(action, runDir);
+    runBrowser(['wait', String(waitMs == null ? 1200 : waitMs)], { runDir });
+
+    const timeline = evalJson('(() => window.__cap.dump({ copy: false }))()', runDir);
+    const file = saveTimeline(runDir, id, timeline);
+    results.push({ id, type, file, summary: timeline.summary, findings: timeline.findings?.length || 0 });
+  });
+
+  writeJson(path.join(runDir, 'capture-results.json'), {
+    capturedAt: new Date().toISOString(),
+    count: results.length,
+    results: results.map(result => ({
+      id: result.id,
+      type: result.type,
+      timelineRef: path.relative(runDir, result.file),
+      summary: result.summary,
+      findings: result.findings,
+    })),
+  });
+  appendLog(runDir, `\nSaved ${results.length} timeline(s).\n`);
+  return results;
+}
+
+function optionalJson(file, fallback) {
+  return fs.existsSync(file) ? readJson(file) : fallback;
+}
+
+function tableRow(cells) {
+  return `| ${cells.map(cell => reportText(cell).replace(/\|/g, '\\|')).join(' | ')} |`;
+}
+
+function reportText(value) {
+  return String(value == null ? '' : value).replace(/\u2014/g, '-');
+}
+
+function plainStrings(value) {
+  if (typeof value === 'string') return reportText(value);
+  if (Array.isArray(value)) return value.map(plainStrings);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plainStrings(item)]));
+  }
+  return value;
+}
+
+function seconds(value) {
+  if (value == null || value === '') return 'unknown';
+  if (typeof value === 'number') return `${value}s`;
+  return String(value);
+}
+
+function sentence(value) {
+  const text = reportText(value).trim();
+  return text ? text[0].toUpperCase() + text.slice(1) : '';
+}
+
+function labelFromId(id) {
+  return sentence(String(id || 'animation').replace(/[-_]+/g, ' '));
+}
+
+function selectorLabel(selector) {
+  const text = String(selector || 'element');
+  const cleaned = text
+    .replace(/:nth-of-type\(\d+\)/g, '')
+    .replace(/^[a-z]+\./, '')
+    .replace(/^[#.]/, '')
+    .replace(/[._-]+/g, ' ')
+    .trim();
+  return sentence(cleaned || text);
+}
+
+function propertyKeys(value) {
+  if (!value || typeof value !== 'object') return [];
+  return Object.keys(value).filter(key => value[key] !== undefined && value[key] !== null);
+}
+
+function mechanismFromProps(props) {
+  const keys = propertyKeys(props).filter(key => key !== 'lazy');
+  if (!keys.length) return 'motion';
+  if (keys.some(key => ['x', 'y', 'z', 'xPercent', 'yPercent', 'scale', 'scaleX', 'scaleY', 'rotate', 'rotation'].includes(key))) {
+    return 'transform';
+  }
+  return keys.join(', ');
+}
+
+function slugPart(value) {
+  return slugify(String(value || '').replace(/[#.[\]"'=]/g, ' '));
+}
+
+function uniquePush(list, item) {
+  if (!item || !item.id || list.some(existing => existing.id === item.id)) return;
+  list.push(item);
+}
+
+function mapCaptureById(manifest) {
+  const out = new Map();
+  (manifest.captures || []).forEach((capture, index) => {
+    out.set(captureId(capture, index), capture);
+  });
+  return out;
+}
+
+function timelineResults(runDir) {
+  const saved = optionalJson(path.join(runDir, 'capture-results.json'), null);
+  if (saved && Array.isArray(saved.results)) return saved.results;
+  const dir = path.join(runDir, 'timelines');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter(file => file.endsWith('.json'))
+    .sort()
+    .map(file => ({
+      id: path.basename(file, '.json'),
+      type: null,
+      timelineRef: path.join('timelines', file),
+    }));
+}
+
+function relativeTimelineRef(runDir, result) {
+  if (result.timelineRef) return result.timelineRef;
+  if (result.file) return path.relative(runDir, result.file);
+  return path.join('timelines', `${result.id}.json`);
+}
+
+function findingProperty(finding) {
+  const props = finding?.properties || {};
+  const preferred = finding.leadProperty && props[finding.leadProperty]
+    ? finding.leadProperty
+    : Object.keys(props)[0];
+  return { name: preferred || finding?.type || 'motion', value: preferred ? props[preferred] : null };
+}
+
+function stateForProperty(propName, value) {
+  if (value === undefined || value === null) return {};
+  return { [propName]: value };
+}
+
+function findingTiming(finding, prop) {
+  return prop?.timing || finding?.timing || {};
+}
+
+function cubicBezier(value) {
+  const text = String(value || '');
+  return /^cubic-bezier\(/.test(text) ? text : null;
+}
+
+function confidenceFor(lead, timing, timeline) {
+  const haystack = JSON.stringify(lead || {});
+  if (haystack.includes('_approx3d')) return '_approx3d';
+  const easing = String(timing?.easing || '');
+  if (!easing || /unknown|verify/i.test(easing)) return 'unknown - verify';
+  if (timeline?.meta?.trigger === 'load' && timeline?.meta?.terminationReason === 'stopped') return 'unknown - verify';
+  return 'measured';
+}
+
+function chooseLeadFinding(timeline, trigger) {
+  const findings = timeline.findings || [];
+  if (!findings.length) return null;
+  if (trigger === 'click' || trigger === 'manual') {
+    const height = findings.find(finding => finding.properties && finding.properties.height);
+    if (height) return height;
+  }
+  return findings.find(finding => {
+    const prop = findingProperty(finding);
+    return prop.value;
+  }) || findings[0];
+}
+
+function summarizeStagger(stagger) {
+  if (!stagger || !stagger.items) return null;
+  return { items: stagger.items, ms: stagger.staggerMs ?? stagger.ms ?? null };
+}
+
+function maxTransitionMs(value) {
+  const matches = String(value || '').match(/[\d.]+m?s/g) || [];
+  const values = matches.map(item => item.endsWith('ms')
+    ? parseFloat(item)
+    : parseFloat(item) * 1000);
+  return values.length ? Math.max(...values) : 700;
+}
+
+function captureSignature(capture) {
+  return [
+    capture.type || '',
+    capture.root || '',
+    capture.action || '',
+    capture.boot ? JSON.stringify(capture.boot) : '',
+  ].join('|');
+}
+
+function addPlannedCapture(state, capture) {
+  const item = plainStrings(capture);
+  const id = captureId(item, state.captures.length);
+  const sig = captureSignature(item);
+  if (state.ids.has(id) || state.signatures.has(sig)) return false;
+  state.ids.add(id);
+  state.signatures.add(sig);
+  state.captures.push(item);
+  return true;
+}
+
+function hoverPlanGroup(selector) {
+  const s = String(selector || '').toLowerCase();
+  if (/work.*(item|card|cover|link)|work_home/.test(s)) return { id: 'work-card-hover', priority: 10 };
+  if (/wordmark|navbar_home_link/.test(s)) return { id: 'wordmark-hover', priority: 20 };
+  if (/g_btn|btn|button|cta/.test(s)) return { id: 'primary-button-hover', priority: 30 };
+  if (/arrow/.test(s)) return { id: 'arrow-row-hover', priority: 40 };
+  if (/navbar|nav.*link/.test(s)) return { id: 'nav-link-hover', priority: 50 };
+  if (/link/.test(s)) return { id: 'link-hover', priority: 60 };
+  if (/menu/.test(s)) return { id: 'menu-hover', priority: 80 };
+  return { id: 'misc-hover', priority: 90 };
+}
+
+function hoverSelectorScore(selector) {
+  const s = String(selector || '').toLowerCase();
+  let score = 0;
+  if (/^a[.#]|^button[.#]|^\[role="button"\]/.test(s)) score -= 20;
+  if (/w-inline-block|g_btn_main|services_home_cta/.test(s)) score -= 8;
+  if (/^ul[.#]|^li[.#]|^span[.#]|^svg[.#]|^img[.#]/.test(s)) score += 18;
+  if (/menu/.test(s)) score += 25;
+  if (/lightbox|vimeo/.test(s)) score += 12;
+  if (/container|contain|content|heading|text$/.test(s)) score += 8;
+  return score;
+}
+
+function inferAccordionRoot(map) {
+  const selectors = [
+    ...(map.cssHovers || []).map(item => item.sel),
+    ...(map.hoverCandidates || []),
+  ].filter(Boolean);
+  if (!selectors.some(selector => /accordion|faq/i.test(selector))) return null;
+  if ((map.libs || []).includes('Webflow')) return 'div.g_faq_item.w-dyn-item';
+  return '[class*="accordion"], [class*="faq"]';
+}
+
+function planFromMap(runDir, flags = {}) {
+  const manifest = optionalJson(path.join(runDir, 'manifest.json'), {});
+  const map = optionalJson(path.join(runDir, 'map.json'), null);
+  if (!map) throw new Error(`Map not found: ${path.join(runDir, 'map.json')}`);
+  if (!manifest.url) throw new Error(`Manifest with url not found: ${path.join(runDir, 'manifest.json')}`);
+
+  const state = {
+    captures: [],
+    ids: new Set(),
+    signatures: new Set(),
+    skipped: [],
+  };
+  for (const capture of manifest.captures || []) {
+    addPlannedCapture(state, capture);
+  }
+
+  const splitSelectors = [...new Set((map.splitReveals || [])
+    .map(reveal => reveal.host)
+    .filter(Boolean))];
+  if (splitSelectors.length) {
+    addPlannedCapture(state, {
+      id: 'boot-load-reveals',
+      type: 'boot',
+      label: 'Boot/load split reveal capture',
+      boot: { selectors: splitSelectors.slice(0, 12), ms: 4000 },
+      waitMs: 4300,
+      reason: `Map found ${splitSelectors.length} split reveal host(s); load captures require __capAutoBoot before page JS runs.`,
+    });
+  }
+
+  for (const st of Array.isArray(map.scrollTriggers) ? map.scrollTriggers : []) {
+    const hasCallbacks = st.callbacks && st.callbacks.length;
+    const hasBoundTween = st.anims && st.anims.length;
+    if (!hasCallbacks || hasBoundTween) continue;
+    if (!st.trigger) {
+      state.skipped.push({
+        id: `scrolltrigger-${st.i}`,
+        reason: 'Callback-only ScrollTrigger has no trigger selector in map.json.',
+      });
+      continue;
+    }
+    addPlannedCapture(state, {
+      id: slugify(`scroll-${st.i}-${st.trigger}`),
+      type: 'scroll-reveal',
+      label: `${selectorLabel(st.trigger)} scroll callback reveal`,
+      root: st.trigger,
+      action: `scrollintoview ${st.trigger}`,
+      waitMs: 1600,
+      reason: `ScrollTrigger ${st.i} has callbacks (${st.callbacks.join(', ')}) but no bound tween in the registry.`,
+    });
+  }
+
+  const accordionRoot = inferAccordionRoot(map);
+  if (accordionRoot) {
+    addPlannedCapture(state, {
+      id: 'accordion-click',
+      type: 'click',
+      label: 'Accordion open/close',
+      root: accordionRoot,
+      action: `click ${accordionRoot}`,
+      waitMs: 900,
+      reason: 'Accordion or FAQ selectors were present in the map. Scan a tight item root to catch height motion.',
+    });
+  }
+
+  const groupedCssHovers = new Map();
+  for (const hover of map.cssHovers || []) {
+    if (!hover.sel || /accordion|faq/i.test(hover.sel)) continue;
+    const key = `${hover.prop}|${hover.dur}|${hover.ease}`;
+    if (!groupedCssHovers.has(key)) groupedCssHovers.set(key, hover);
+  }
+  for (const hover of groupedCssHovers.values()) {
+    addPlannedCapture(state, {
+      id: slugify(`css-hover-${hover.sel}`),
+      type: 'hover',
+      label: `${selectorLabel(hover.sel)} CSS hover`,
+      root: hover.sel,
+      action: `hover ${hover.sel}`,
+      waitMs: Math.min(2200, Math.max(900, Math.round(maxTransitionMs(hover.dur) + 650))),
+      reason: `Representative CSS hover group: ${hover.prop} ${hover.dur} ${hover.ease}.`,
+    });
+  }
+
+  const maxHoverCaptures = Number.isFinite(flags.maxHoverCaptures) ? flags.maxHoverCaptures : 10;
+  const coveredSelectors = new Set(state.captures.map(capture => capture.root).filter(Boolean));
+  const hoverGroups = new Map();
+  for (const selector of map.hoverCandidates || []) {
+    if (!selector || coveredSelectors.has(selector)) continue;
+    if (/accordion|faq/i.test(selector)) continue;
+    const group = hoverPlanGroup(selector);
+    const current = hoverGroups.get(group.id);
+    const score = hoverSelectorScore(selector);
+    if (!current || score < current.score) {
+      hoverGroups.set(group.id, { selector, priority: group.priority, score });
+    }
+  }
+  const hoverItems = [...hoverGroups.entries()]
+    .sort((a, b) => a[1].priority - b[1].priority)
+    .slice(0, maxHoverCaptures);
+  for (const [groupId, item] of hoverItems) {
+    addPlannedCapture(state, {
+      id: groupId,
+      type: 'hover',
+      label: `${selectorLabel(item.selector)} hover`,
+      root: item.selector,
+      action: `hover ${item.selector}`,
+      waitMs: 1300,
+      reason: `Representative hover candidate for ${groupId}; deduped from ${map.hoverCandidates.length} mapped hover candidate(s).`,
+    });
+  }
+
+  const proposed = plainStrings({
+    url: manifest.url,
+    viewport: normalizeViewport(manifest),
+    initialWaitMs: manifest.initialWaitMs || 1500,
+    captureInitialWaitMs: manifest.captureInitialWaitMs || 1500,
+    generatedBy: 'bin/motion-decompile plan',
+    generatedAt: new Date().toISOString(),
+    captures: state.captures,
+  });
+  const outName = flags.out || 'manifest.proposed.json';
+  const outFile = path.isAbsolute(outName) ? outName : path.join(runDir, outName);
+  writeJson(outFile, proposed);
+  const plan = plainStrings({
+    generatedAt: proposed.generatedAt,
+    sourceMap: 'map.json',
+    manifest: path.relative(runDir, outFile),
+    counts: {
+      proposedCaptures: state.captures.length,
+      scrollTriggers: Array.isArray(map.scrollTriggers) ? map.scrollTriggers.length : 0,
+      hoverCandidates: (map.hoverCandidates || []).length,
+      cssHovers: (map.cssHovers || []).length,
+      splitReveals: (map.splitReveals || []).length,
+      skipped: state.skipped.length,
+    },
+    skipped: state.skipped,
+  });
+  writeJson(path.join(runDir, 'capture-plan.json'), plan);
+  fs.writeFileSync(path.join(runDir, 'capture-plan.md'), renderCapturePlanMarkdown(proposed, plan));
+  appendLog(runDir, `\nSaved capture plan: \`${path.relative(runDir, outFile)}\`, \`capture-plan.md\`\n`);
+  return { manifest: proposed, manifestFile: outFile, plan };
+}
+
+function renderCapturePlanMarkdown(manifest, plan) {
+  const lines = [];
+  lines.push('# Capture Plan');
+  lines.push('');
+  lines.push(`Generated: ${reportText(plan.generatedAt)}`);
+  lines.push(`URL: ${reportText(manifest.url)}`);
+  lines.push(`Viewport: ${manifest.viewport.join('x')}`);
+  lines.push(`Manifest: ${reportText(plan.manifest)}`);
+  lines.push('');
+  lines.push('## Summary');
+  lines.push('');
+  lines.push(`- Proposed captures: ${plan.counts.proposedCaptures}`);
+  lines.push(`- ScrollTriggers in map: ${plan.counts.scrollTriggers}`);
+  lines.push(`- Hover candidates in map: ${plan.counts.hoverCandidates}`);
+  lines.push(`- CSS hover timing groups: ${plan.counts.cssHovers}`);
+  lines.push(`- Split reveal hosts: ${plan.counts.splitReveals}`);
+  lines.push('');
+  lines.push('## Proposed Captures');
+  lines.push('');
+  lines.push(tableRow(['ID', 'Type', 'Root', 'Wait', 'Reason']));
+  lines.push(tableRow(['--', '--', '--', '--', '--']));
+  for (const capture of manifest.captures || []) {
+    lines.push(tableRow([
+      capture.id,
+      capture.type,
+      capture.root || (capture.boot ? `boot:${(capture.boot.selectors || []).length} selectors` : ''),
+      capture.waitMs || '',
+      capture.reason || '',
+    ]));
+  }
+  lines.push('');
+  if (plan.skipped.length) {
+    lines.push('## Skipped');
+    lines.push('');
+    for (const item of plan.skipped) lines.push(`- **${reportText(item.id)}**: ${reportText(item.reason)}`);
+    lines.push('');
+  }
+  lines.push('## Next');
+  lines.push('');
+  lines.push(`Run \`./bin/motion-decompile capture <run-dir> ${reportText(plan.manifest)}\` after reviewing selectors.`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function timelineAnimation(runDir, result, capture) {
+  const ref = relativeTimelineRef(runDir, result);
+  const file = path.join(runDir, ref);
+  if (!fs.existsSync(file)) return null;
+  const timeline = readJson(file);
+  const id = slugify(result.id || timeline.meta?.captureSource || path.basename(ref, '.json'));
+  const trigger = capture?.type || result.type || timeline.meta?.trigger || 'manual';
+  const leadFinding = chooseLeadFinding(timeline, trigger);
+  const prop = findingProperty(leadFinding);
+  const timing = findingTiming(leadFinding, prop.value);
+  const selector = capture?.root || capture?.selector || timeline.meta?.rootSelector || leadFinding?.selector || '';
+  const leadSelector = leadFinding?.locator?.uniqueSelector || leadFinding?.locator?.shortSelector || leadFinding?.selector || selector;
+  const from = stateForProperty(prop.name, prop.value?.from ?? leadFinding?.from);
+  const to = stateForProperty(prop.name, prop.value?.to ?? leadFinding?.to);
+  const mechanism = capture?.mechanism || [...new Set((timeline.findings || []).map(finding => finding.type || finding.leadProperty).filter(Boolean))].join(' + ') || 'motion';
+  const confidence = capture?.confidence || confidenceFor(leadFinding, timing, timeline);
+  const duration = capture?.duration || timing.duration || (timeline.meta?.durationMs ? `${Math.round(timeline.meta.durationMs)}ms measured` : 'unknown');
+  const ease = capture?.ease || timing.easing || 'unknown';
+  return {
+    id,
+    label: capture?.label || labelFromId(id),
+    selector,
+    trigger: trigger === 'manual' && capture?.type ? capture.type : trigger,
+    mechanism,
+    patternId: capture?.patternId || null,
+    layers: timeline.findings?.length || timeline.meta?.elementsMoved || 0,
+    stagger: capture?.stagger || summarizeStagger(timeline.stagger),
+    lead: {
+      selector: leadSelector,
+      from,
+      to,
+      duration,
+      ease,
+      easeBezier: cubicBezier(ease),
+    },
+    confidence,
+    timelineRef: ref,
+    notes: capture?.notes || timeline.summary || '',
+  };
+}
+
+function scrollTriggerAnimations(map, patterns) {
+  const animations = [];
+  const triggers = Array.isArray(map?.scrollTriggers) ? map.scrollTriggers : [];
+  if (triggers.some(st => st.scrub && st.anims && st.anims.length)) {
+    uniquePush(patterns, {
+      id: 'p-scroll-scrub',
+      trigger: 'scroll',
+      appliesTo: `${triggers.filter(st => st.scrub && st.anims && st.anims.length).length} ScrollTrigger scrub tween(s)`,
+      summary: 'Registry-backed ScrollTrigger tween with scrubbed progress.',
+      confidence: 'measured',
+    });
+  }
+  if (triggers.some(st => st.callbacks && st.callbacks.length && (!st.anims || !st.anims.length))) {
+    uniquePush(patterns, {
+      id: 'p-scroll-callback',
+      trigger: 'scroll',
+      appliesTo: `${triggers.filter(st => st.callbacks && st.callbacks.length && (!st.anims || !st.anims.length)).length} callback-only ScrollTrigger(s)`,
+      summary: 'Callback-controlled motion. Needs timeline capture to recover from/to values.',
+      confidence: 'unknown - verify',
+    });
+  }
+
+  for (const st of triggers) {
+    const anims = Array.isArray(st.anims) ? st.anims : [];
+    if (anims.length) {
+      anims.forEach((anim, animIndex) => {
+        const target = anim.targets?.[0] || st.trigger;
+        const props = Object.fromEntries(Object.entries(anim.props || {}).filter(([key]) => key !== 'lazy'));
+        animations.push({
+          id: slugify(`scrolltrigger-${st.i}-${animIndex}-${target || st.trigger}`),
+          label: `${selectorLabel(target || st.trigger)} scroll motion`,
+          selector: target || st.trigger,
+          trigger: 'scroll',
+          mechanism: mechanismFromProps(props),
+          patternId: st.scrub ? 'p-scroll-scrub' : null,
+          layers: anim.targetCount || anim.targets?.length || 1,
+          stagger: anim.stagger ? { items: anim.targetCount || null, ms: anim.stagger } : null,
+          lead: {
+            selector: target || st.trigger,
+            from: {},
+            to: props,
+            duration: st.scrub ? `scroll scrub, registry tween duration ${seconds(anim.duration)}` : seconds(anim.duration),
+            ease: anim.ease || 'unknown',
+            easeBezier: cubicBezier(anim.ease),
+          },
+          confidence: 'measured',
+          timelineRef: `map.json#scrollTriggers[${st.i}]`,
+          notes: `start: ${st.start || 'unknown'}; end: ${st.end || 'unknown'}; scrub: ${Boolean(st.scrub)}.`,
+        });
+      });
+    } else if (st.callbacks && st.callbacks.length) {
+      animations.push({
+        id: slugify(`scrolltrigger-${st.i}-${st.trigger || 'callback'}`),
+        label: `${selectorLabel(st.trigger)} callback scroll motion`,
+        selector: st.trigger,
+        trigger: 'scroll',
+        mechanism: 'callback-controlled motion',
+        patternId: 'p-scroll-callback',
+        layers: 0,
+        stagger: null,
+        lead: {
+          selector: st.trigger,
+          from: {},
+          to: {},
+          duration: 'unknown',
+          ease: 'unknown',
+          easeBezier: null,
+        },
+        confidence: 'unknown - verify',
+        timelineRef: `map.json#scrollTriggers[${st.i}]`,
+        notes: `Callbacks: ${st.callbacks.join(', ')}. No bound registry tween was available; capture this item for measured values.`,
+      });
+    }
+  }
+  return animations;
+}
+
+function loopAnimations(map, patterns) {
+  const loops = Array.isArray(map?.loops) ? map.loops : [];
+  const groups = new Map();
+  for (const loop of loops) {
+    const key = `${loop.name}|${loop.dur}|${loop.timing}`;
+    groups.set(key, (groups.get(key) || 0) + 1);
+  }
+  for (const [key, count] of groups) {
+    const [name, dur, timing] = key.split('|');
+    uniquePush(patterns, {
+      id: slugify(`p-css-loop-${name}-${dur}-${timing}`),
+      trigger: 'load',
+      appliesTo: `${count} element(s)`,
+      summary: `${dur} infinite CSS keyframes ${name} with ${timing}.`,
+      confidence: 'measured',
+    });
+  }
+  return loops.map((loop, index) => ({
+    id: slugify(`css-loop-${index}-${loop.name}-${loop.sel}`),
+    label: `${selectorLabel(loop.sel)} CSS loop`,
+    selector: loop.sel,
+    trigger: 'load',
+    mechanism: 'CSS keyframes',
+    patternId: slugify(`p-css-loop-${loop.name}-${loop.dur}-${loop.timing}`),
+    layers: 1,
+    stagger: null,
+    lead: {
+      selector: loop.sel,
+      from: { state: `CSS keyframes ${loop.name}` },
+      to: { state: `CSS keyframes ${loop.name}` },
+      duration: `${loop.dur} infinite`,
+      ease: loop.timing || 'unknown',
+      easeBezier: cubicBezier(loop.timing),
+    },
+    confidence: 'measured',
+    timelineRef: null,
+    notes: `Read from map loop entry ${index}.`,
+  }));
+}
+
+function cssHoverAnimations(map, patterns) {
+  const hovers = Array.isArray(map?.cssHovers) ? map.cssHovers : [];
+  const groups = new Map();
+  for (const hover of hovers) {
+    const key = `${hover.prop}|${hover.dur}|${hover.ease}`;
+    groups.set(key, (groups.get(key) || 0) + 1);
+  }
+  for (const [key, count] of groups) {
+    const [prop, dur, ease] = key.split('|');
+    uniquePush(patterns, {
+      id: slugify(`p-css-hover-${prop}-${dur}-${ease}`),
+      trigger: 'hover',
+      appliesTo: `${count} CSS hover transition(s)`,
+      summary: `${prop} transition over ${dur} with ${ease}.`,
+      confidence: 'unknown - verify',
+    });
+  }
+  return hovers.map((hover, index) => ({
+    id: slugify(`css-hover-${index}-${hover.sel}`),
+    label: `${selectorLabel(hover.sel)} hover transition`,
+    selector: hover.sel,
+    trigger: 'hover',
+    mechanism: hover.prop || 'CSS transition',
+    patternId: slugify(`p-css-hover-${hover.prop}-${hover.dur}-${hover.ease}`),
+    layers: 1,
+    stagger: null,
+    lead: {
+      selector: hover.sel,
+      from: { state: 'not captured' },
+      to: { state: 'not captured' },
+      duration: hover.dur || 'unknown',
+      ease: hover.ease || 'unknown',
+      easeBezier: cubicBezier(hover.ease),
+    },
+    confidence: 'unknown - verify',
+    timelineRef: null,
+    notes: 'Timing came from static CSS transition data. Run a live capture for measured from/to deltas.',
+  }));
+}
+
+function splitRevealAnimations(map, patterns) {
+  const reveals = Array.isArray(map?.splitReveals) ? map.splitReveals : [];
+  if (reveals.length) {
+    uniquePush(patterns, {
+      id: 'p-split-reveal',
+      trigger: 'load',
+      appliesTo: `${reveals.length} mapped split reveal host(s)`,
+      summary: 'SplitText or line-mask reveal host detected structurally.',
+      confidence: 'unknown - verify',
+    });
+  }
+  return reveals.map((reveal, index) => ({
+    id: slugify(`split-reveal-${index}-${reveal.host}`),
+    label: `${selectorLabel(reveal.host)} split reveal`,
+    selector: reveal.host,
+    trigger: 'load',
+    mechanism: 'splittext line-mask reveal',
+    patternId: 'p-split-reveal',
+    layers: reveal.count || 0,
+    stagger: null,
+    lead: {
+      selector: reveal.host,
+      from: { state: 'split nodes present before reveal' },
+      to: { state: 'visible split content' },
+      duration: 'unknown',
+      ease: 'unknown',
+      easeBezier: null,
+    },
+    confidence: 'unknown - verify',
+    timelineRef: null,
+    notes: `Kinds: ${(reveal.kinds || []).join(', ') || 'unknown'}. Section: ${reveal.section || 'unknown'}.`,
+  }));
+}
+
+function applyTokens(spec) {
+  const tokens = Object.assign({}, spec.tokens || {});
+  const easeCounts = new Map();
+  const durationCounts = new Map();
+  for (const animation of spec.animations) {
+    const ease = animation.lead?.easeBezier;
+    if (ease) easeCounts.set(ease, (easeCounts.get(ease) || 0) + 1);
+    const duration = animation.lead?.duration;
+    if (duration && !/unknown|scroll scrub|infinite/i.test(duration)) {
+      durationCounts.set(duration, (durationCounts.get(duration) || 0) + 1);
+    }
+  }
+  for (const [ease, count] of easeCounts) {
+    if (count < 2) continue;
+    const id = `ease.${slugPart(ease).replace(/^cubic-bezier-/, 'cubic-')}`;
+    tokens[id] = { bezier: ease };
+    for (const animation of spec.animations) {
+      if (animation.lead?.easeBezier === ease) animation.lead.ease = id;
+    }
+  }
+  for (const [duration, count] of durationCounts) {
+    if (count < 2) continue;
+    const id = `dur.${slugPart(duration)}`;
+    tokens[id] = duration;
+  }
+  spec.tokens = tokens;
+  return spec;
+}
+
+function assembleSpec(runDir) {
+  const manifest = optionalJson(path.join(runDir, 'manifest.json'), {});
+  const map = optionalJson(path.join(runDir, 'map.json'), {});
+  const patterns = [];
+  const animations = [];
+
+  for (const pattern of manifest.patterns || []) uniquePush(patterns, pattern);
+  animations.push(...scrollTriggerAnimations(map, patterns));
+  animations.push(...loopAnimations(map, patterns));
+  animations.push(...cssHoverAnimations(map, patterns));
+  animations.push(...splitRevealAnimations(map, patterns));
+
+  const captures = mapCaptureById(manifest);
+  for (const result of timelineResults(runDir)) {
+    const capture = captures.get(result.id) || {};
+    const animation = timelineAnimation(runDir, result, capture);
+    if (animation) animations.push(animation);
+  }
+  for (const animation of manifest.animations || []) animations.push(animation);
+
+  const stack = map.libs || [];
+  const spec = applyTokens({
+    meta: {
+      url: manifest.url || map.url || null,
+      capturedAt: today(),
+      viewport: normalizeViewport(manifest),
+      stack,
+      method: manifest.method || 'Generated by bin/motion-decompile from map.json and timelines/*.json.',
+      notes: manifest.notes || 'Autogenerated first-pass spec. Entries marked unknown - verify need a targeted capture or human review before recreation.',
+    },
+    tokens: manifest.tokens || {},
+    patterns,
+    animations,
+    unspecced: manifest.unspecced || [],
+  });
+
+  if (map.hoverCandidates && map.hoverCandidates.length) {
+    const captured = new Set((manifest.captures || []).map((capture, index) => captureId(capture, index)));
+    spec.unspecced.push({
+      id: 'remaining-hover-candidates',
+      note: `Static map found ${map.hoverCandidates.length} hover candidate(s). Captured ${captured.size}; dedupe and capture representative remaining mechanisms as needed.`,
+    });
+  }
+
+  const plainSpec = plainStrings(spec);
+  writeJson(path.join(runDir, 'animations.json'), plainSpec);
+  fs.writeFileSync(path.join(runDir, 'animations.md'), renderAnimationsMarkdown(plainSpec));
+  appendLog(runDir, `\nSaved assembler output: \`animations.json\`, \`animations.md\`\n`);
+  return plainSpec;
+}
+
+function animationLine(animation) {
+  const lead = animation.lead || {};
+  const bits = [
+    `**${reportText(animation.label || animation.id)}** (${animation.id})`,
+    animation.trigger,
+    animation.mechanism,
+    `layers: ${animation.layers ?? 0}`,
+    `duration: ${lead.duration || 'unknown'}`,
+    `ease: ${lead.ease || lead.easeBezier || 'unknown'}`,
+    `confidence: ${animation.confidence || 'unknown - verify'}`,
+  ];
+  if (animation.timelineRef) bits.push(`ref: ${animation.timelineRef}`);
+  return `- ${bits.map(reportText).join(' · ')}`;
+}
+
+function confidenceCounts(animations) {
+  const counts = new Map();
+  for (const animation of animations) {
+    const key = animation.confidence || 'unknown - verify';
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function renderAnimationsMarkdown(spec) {
+  const lines = [];
+  const animations = spec.animations || [];
+  const signature = animations.filter(animation =>
+    ['load', 'scroll'].includes(animation.trigger) || Number(animation.layers || 0) >= 5
+  ).slice(0, 12);
+  const signatureSet = new Set((signature.length ? signature : animations.slice(0, 8)).map(animation => animation.id));
+  const signatureItems = signature.length ? signature : animations.slice(0, 8);
+  const polish = animations.filter(animation => !signatureSet.has(animation.id) && animation.confidence === 'measured');
+  const needsVerify = animations.filter(animation => animation.confidence !== 'measured');
+
+  lines.push('# Animation Spec');
+  lines.push('');
+  lines.push(`Source: ${spec.meta?.url || 'unknown'}`);
+  lines.push(`Captured: ${spec.meta?.capturedAt || 'unknown'}`);
+  if (spec.meta?.viewport) lines.push(`Viewport: ${spec.meta.viewport.join('x')}`);
+  lines.push(`Stack: ${(spec.meta?.stack || []).join(', ') || '(none detected)'}`);
+  lines.push('');
+  lines.push('## Signature moments');
+  if (signatureItems.length) signatureItems.forEach(animation => lines.push(animationLine(animation)));
+  else lines.push('- None identified.');
+  lines.push('');
+  lines.push('## Patterns');
+  if (spec.patterns?.length) {
+    for (const pattern of spec.patterns) {
+      lines.push(`- **${reportText(pattern.id)}** · ${reportText(pattern.trigger)} · ${reportText(pattern.appliesTo)} · ${reportText(pattern.summary)} · confidence: ${reportText(pattern.confidence)}`);
+    }
+  } else {
+    lines.push('- None identified.');
+  }
+  lines.push('');
+  lines.push('## Polish');
+  if (polish.length) polish.forEach(animation => lines.push(animationLine(animation)));
+  else lines.push('- None identified.');
+  lines.push('');
+  lines.push('## Needs verify');
+  if (needsVerify.length) {
+    for (const animation of needsVerify) {
+      lines.push(`- **${reportText(animation.id)}** · ${reportText(animation.notes || 'Review before recreation.')}`);
+    }
+  } else {
+    lines.push('- None.');
+  }
+  lines.push('');
+  lines.push("## Can't spec-capture");
+  if (spec.unspecced?.length) {
+    for (const item of spec.unspecced) lines.push(`- **${reportText(item.id)}** · ${reportText(item.note)}`);
+  } else {
+    lines.push('- None logged.');
+  }
+  lines.push('');
+  lines.push('## Confidence counts');
+  for (const [confidence, count] of confidenceCounts(animations)) {
+    lines.push(`- ${reportText(confidence)}: ${count}`);
+  }
+  lines.push('');
+  return `${lines.join('\n')}`;
+}
+
+function buildReport(runDir) {
+  const manifest = optionalJson(path.join(runDir, 'manifest.json'), {});
+  const map = optionalJson(path.join(runDir, 'map.json'), null);
+  const captureResults = optionalJson(path.join(runDir, 'capture-results.json'), { results: [] });
+  const assembled = optionalJson(path.join(runDir, 'animations.json'), null);
+  const rows = captureResults.results.map(result => {
+    const timeline = optionalJson(path.join(runDir, result.timelineRef), {});
+    const moved = timeline.meta?.elementsMoved ?? result.findings ?? '';
+    return tableRow([
+      result.id,
+      result.type,
+      moved,
+      timeline.meta?.terminationReason || '',
+      result.summary || timeline.summary || '',
+      result.timelineRef,
+    ]);
+  });
+
+  const lines = [];
+  lines.push('# Motion Decompile Report');
+  lines.push('');
+  lines.push(`Generated: ${new Date().toISOString()}`);
+  if (manifest.url) lines.push(`URL: ${manifest.url}`);
+  if (manifest.viewport) lines.push(`Viewport: ${manifest.viewport.join('x')}`);
+  lines.push(`Run directory: ${runDir}`);
+  lines.push('');
+  lines.push('## Artifacts');
+  lines.push('');
+  lines.push('- `manifest.json`');
+  if (map) lines.push('- `map.json`');
+  if (captureResults.results.length) lines.push('- `capture-results.json`');
+  if (fs.existsSync(path.join(runDir, 'capture-plan.md'))) {
+    lines.push('- `manifest.proposed.json`');
+    lines.push('- `capture-plan.json`');
+    lines.push('- `capture-plan.md`');
+  }
+  if (assembled) {
+    lines.push('- `animations.json`');
+    lines.push('- `animations.md`');
+  }
+  lines.push('- `timelines/*.json`');
+  lines.push('- `run-log.md`');
+  lines.push('');
+
+  if (map) {
+    lines.push('## Map Summary');
+    lines.push('');
+    lines.push(`- Libraries: ${(map.libs || []).join(', ') || '(none detected)'}`);
+    lines.push(`- ScrollTriggers: ${Array.isArray(map.scrollTriggers) ? map.scrollTriggers.length : 0}`);
+    lines.push(`- Hover candidates: ${(map.hoverCandidates || []).length}`);
+    lines.push(`- CSS hovers: ${(map.cssHovers || []).length}`);
+    lines.push(`- Loops: ${(map.loops || []).length}`);
+    lines.push(`- Split reveals: ${(map.splitReveals || []).length}`);
+    lines.push('');
+  }
+
+  lines.push('## Captures');
+  lines.push('');
+  if (rows.length) {
+    lines.push(tableRow(['ID', 'Type', 'Moved', 'Stop', 'Summary', 'Timeline']));
+    lines.push(tableRow(['--', '--', '--', '--', '--', '--']));
+    lines.push(...rows);
+  } else {
+    lines.push('No timelines have been saved yet.');
+  }
+  lines.push('');
+
+  const skipped = (manifest.captures || []).filter(capture => capture.skip || capture.enabled === false);
+  if (skipped.length) {
+    lines.push('## Skipped');
+    lines.push('');
+    for (const capture of skipped) {
+      lines.push(`- ${capture.id || '(unnamed)'}: ${capture.reason || 'marked skipped'}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('## Notes');
+  lines.push('');
+  if (assembled) lines.push('- `animations.json` is the canonical assembled spec; `animations.md` is rendered from it.');
+  else lines.push('- Run `bin/motion-decompile assemble <run-dir>` to create `animations.json` and `animations.md`.');
+  lines.push('- Capture reliability still depends on selectors resolving in a real visible browser.');
+  lines.push('');
+
+  const report = lines.join('\n');
+  fs.writeFileSync(path.join(runDir, 'report.md'), report);
+  appendLog(runDir, `\nSaved report: \`report.md\`\n`);
+  return report;
+}
+
+function initCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length !== 1) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const url = positionals[0];
+  const viewport = flags.viewport || DEFAULT_VIEWPORT;
+  const runDir = runDirFor(url, flags);
+  ensureRunDir(runDir);
+  const manifest = { url, viewport, captures: [] };
+  writeJson(path.join(runDir, 'manifest.json'), manifest);
+  appendLog(runDir, `Initialized run for ${url}`);
+  if (!flags.noOpen) openPage(runDir, url, viewport, [ENGINE]);
+  console.log(runDir);
+}
+
+function mapCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length !== 1) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  ensureRunDir(runDir);
+  const { manifest } = loadManifest(runDir);
+  const map = runMap(runDir, manifest, flags);
+  console.log(`Saved ${path.join(runDir, 'map.json')}`);
+  console.log(`${(map.libs || []).join(', ') || 'No libraries detected'}; ${(map.hoverCandidates || []).length} hover candidates`);
+}
+
+function captureCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length < 1 || positionals.length > 2) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  ensureRunDir(runDir);
+  const { file, manifest } = loadManifest(runDir, positionals[1]);
+  const results = runCapture(runDir, manifest, file);
+  console.log(`Saved ${results.length} timeline(s) under ${path.join(runDir, 'timelines')}`);
+}
+
+function planCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length !== 1) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  ensureRunDir(runDir);
+  const result = planFromMap(runDir, flags);
+  console.log(`Saved ${result.manifestFile}`);
+  console.log(`Saved ${path.join(runDir, 'capture-plan.md')}`);
+  console.log(`Proposed captures: ${result.manifest.captures.length}`);
+}
+
+function reportCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length !== 1) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  ensureRunDir(runDir);
+  buildReport(runDir);
+  console.log(`Saved ${path.join(runDir, 'report.md')}`);
+}
+
+function assembleCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length !== 1) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  ensureRunDir(runDir);
+  const spec = assembleSpec(runDir);
+  console.log(`Saved ${path.join(runDir, 'animations.json')}`);
+  console.log(`Saved ${path.join(runDir, 'animations.md')}`);
+  console.log(`Animations: ${spec.animations.length}; patterns: ${spec.patterns.length}; unspecced: ${spec.unspecced.length}`);
+}
+
+function runCommand(argv) {
+  const { flags, positionals } = parseFlags(argv);
+  if (flags.help || positionals.length !== 1) {
+    usage();
+    process.exit(flags.help ? 0 : 1);
+  }
+  const { manifest, file } = loadManifest(process.cwd(), positionals[0]);
+  if (!manifest.url) throw new Error('Manifest needs a url.');
+  const runDir = runDirFor(manifest.url, flags);
+  ensureRunDir(runDir);
+  writeJson(path.join(runDir, 'manifest.json'), manifest);
+  appendLog(runDir, `Running full pipeline from ${file}`);
+  const map = runMap(runDir, manifest, flags);
+  const results = runCapture(runDir, manifest, file);
+  const spec = assembleSpec(runDir);
+  buildReport(runDir);
+  console.log(`Run: ${runDir}`);
+  console.log(`Map: ${(map.libs || []).join(', ') || 'no libraries'}; ${(map.hoverCandidates || []).length} hover candidates`);
+  console.log(`Timelines: ${results.length}`);
+  console.log(`Animations: ${spec.animations.length}`);
+  console.log(`Spec: ${path.join(runDir, 'animations.json')}`);
+  console.log(`Report: ${path.join(runDir, 'report.md')}`);
+}
+
+function main() {
+  const [command, ...rest] = process.argv.slice(2);
+  if (!command || command === '--help' || command === '-h') {
+    usage();
+    process.exit(command ? 0 : 1);
+  }
+
+  if (command === 'init') initCommand(rest);
+  else if (command === 'map') mapCommand(rest);
+  else if (command === 'plan') planCommand(rest);
+  else if (command === 'capture') captureCommand(rest);
+  else if (command === 'assemble') assembleCommand(rest);
+  else if (command === 'report') reportCommand(rest);
+  else if (command === 'run') runCommand(rest);
+  else throw new Error(`Unknown command: ${command}`);
+}
+
+try {
+  main();
+} catch (error) {
+  console.error(`motion-decompile: ${error.message}`);
+  process.exit(1);
+}

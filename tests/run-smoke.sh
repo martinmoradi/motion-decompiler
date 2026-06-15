@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION="motion-smoke-$$"
 SERVER_LOG="$(mktemp)"
+TMP_ASSEMBLE=""
 export AGENT_BROWSER_CONFIRM_ACTIONS="${AGENT_BROWSER_CONFIRM_ACTIONS:-}"
 export AGENT_BROWSER_CONFIRM_INTERACTIVE="${AGENT_BROWSER_CONFIRM_INTERACTIVE:-false}"
 AB=(agent-browser --confirm-actions "" --confirm-interactive false)
@@ -18,11 +19,16 @@ PY
 )"
 URL="http://127.0.0.1:${PORT}/tests/fixtures/basic-motion.html"
 
+node --check "$ROOT/bin/motion-decompile" >/dev/null
+
 cleanup() {
   "${AB[@]}" --session "$SESSION" close --all >/dev/null 2>&1 || true
   if [[ -n "${SERVER_PID:-}" ]]; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$TMP_ASSEMBLE" ]]; then
+    rm -rf "$TMP_ASSEMBLE"
   fi
   rm -f "$SERVER_LOG"
 }
@@ -204,3 +210,151 @@ SMOKE_JS='
 RESULT="$("${AB[@]}" --session "$SESSION" eval "$SMOKE_JS")"
 printf '%s\n' "$RESULT" | jq -e '.ok == true and ([.checks[]] | all(. == true))' >/dev/null
 printf '%s\n' "$RESULT" | jq '{ok, checks, samples}'
+
+TMP_ASSEMBLE="$(mktemp -d)"
+mkdir -p "$TMP_ASSEMBLE/timelines"
+cat >"$TMP_ASSEMBLE/manifest.json" <<'JSON'
+{
+  "url": "http://example.test/",
+  "viewport": [800, 600],
+  "captures": [
+    {
+      "id": "fixture-click",
+      "type": "click",
+      "root": "#accordion",
+      "label": "Fixture accordion"
+    }
+  ]
+}
+JSON
+cat >"$TMP_ASSEMBLE/map.json" <<'JSON'
+{
+  "libs": ["GSAP"],
+  "scrollTriggers": [
+    {
+      "i": 1,
+      "trigger": "#hero",
+      "start": "top bottom",
+      "end": "bottom top",
+      "scrub": true,
+      "pin": false,
+      "toggleActions": "play",
+      "callbacks": [],
+      "anims": [
+        {
+          "targets": ["#hero-image"],
+          "targetCount": 1,
+          "duration": 0.5,
+          "ease": "none",
+          "stagger": null,
+          "props": { "y": 125 }
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "trigger": "#cta",
+      "start": "top bottom",
+      "end": "bottom top",
+      "scrub": false,
+      "pin": false,
+      "toggleActions": "play",
+      "callbacks": ["onEnter"],
+      "anims": []
+    }
+  ],
+  "cssHovers": [
+    {
+      "sel": ".button",
+      "prop": "transform",
+      "dur": "0.45s",
+      "ease": "cubic-bezier(0.2, 0.8, 0.2, 1)"
+    }
+  ],
+  "loops": [
+    {
+      "sel": "#sprite",
+      "name": "spriteFrames",
+      "dur": "0.5s",
+      "timing": "steps(4)"
+    }
+  ],
+  "splitReveals": [
+    {
+      "host": "h1.hero",
+      "section": "section.hero",
+      "count": 2,
+      "kinds": ["lines-split"]
+    }
+  ],
+  "hoverCandidates": ["a.button", ".button__label"]
+}
+JSON
+cat >"$TMP_ASSEMBLE/capture-results.json" <<'JSON'
+{
+  "capturedAt": "2026-06-15T00:00:00.000Z",
+  "count": 1,
+  "results": [
+    {
+      "id": "fixture-click",
+      "type": "click",
+      "timelineRef": "timelines/fixture-click.json",
+      "summary": "Fixture accordion opens.",
+      "findings": 1
+    }
+  ]
+}
+JSON
+cat >"$TMP_ASSEMBLE/timelines/fixture-click.json" <<'JSON'
+{
+  "meta": {
+    "source": "http://example.test/",
+    "libraries": ["GSAP"],
+    "mode": "scan",
+    "trigger": "manual",
+    "terminationReason": "settled",
+    "rootSelector": "#accordion",
+    "durationMs": 700,
+    "elementsMoved": 1
+  },
+  "summary": "Fixture accordion opens.",
+  "stagger": null,
+  "findings": [
+    {
+      "selector": "#panel",
+      "type": "height",
+      "leadProperty": "height",
+      "properties": {
+        "height": {
+          "from": "0px",
+          "to": "64px",
+          "timing": {
+            "duration": "0.25s",
+            "easing": "cubic-bezier(0.2, 0.8, 0.2, 1)"
+          }
+        }
+      },
+      "timing": {
+        "duration": "0.25s",
+        "easing": "cubic-bezier(0.2, 0.8, 0.2, 1)"
+      }
+    }
+  ]
+}
+JSON
+"$ROOT/bin/motion-decompile" plan "$TMP_ASSEMBLE" >/dev/null
+jq -e '
+  .url == "http://example.test/" and
+  any(.captures[]; .id == "boot-load-reveals" and .type == "boot") and
+  any(.captures[]; .type == "scroll-reveal" and .root == "#cta") and
+  any(.captures[]; .type == "hover")
+' "$TMP_ASSEMBLE/manifest.proposed.json" >/dev/null
+test -s "$TMP_ASSEMBLE/capture-plan.md"
+"$ROOT/bin/motion-decompile" assemble "$TMP_ASSEMBLE" >/dev/null
+jq -e '
+  .meta.url == "http://example.test/" and
+  (.animations | length) >= 5 and
+  any(.patterns[]; .id == "p-scroll-scrub") and
+  any(.animations[]; .id == "fixture-click" and .trigger == "click" and .lead.from.height == "0px" and .timelineRef == "timelines/fixture-click.json")
+' "$TMP_ASSEMBLE/animations.json" >/dev/null
+test -s "$TMP_ASSEMBLE/animations.md"

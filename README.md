@@ -36,6 +36,88 @@ every time. Agents should save JSON from `window.__capLast` /
 `window.__capBootLast` after calling `dump({ copy:false })` or
 `bootDump({ copy:false })`.
 
+## Repeatable local pipeline CLI
+
+`bin/motion-decompile` is the first small orchestration layer around
+`bin/capture-browser`. It creates run folders, opens the target with the engine
+injected, saves `__cap.map()`, runs manifest-defined captures, stores timeline
+JSON, assembles `animations.json`, renders `animations.md`, and writes a compact
+`report.md`.
+
+```bash
+./bin/motion-decompile init https://mammothmurals.com/
+./bin/motion-decompile map runs/mammothmurals.com/2026-06-15-run
+./bin/motion-decompile plan runs/mammothmurals.com/2026-06-15-run
+./bin/motion-decompile capture runs/mammothmurals.com/2026-06-15-run manifest.json
+./bin/motion-decompile assemble runs/mammothmurals.com/2026-06-15-run
+./bin/motion-decompile report runs/mammothmurals.com/2026-06-15-run
+```
+
+You can also run all phases from one manifest:
+
+```bash
+./bin/motion-decompile run manifest.json
+```
+
+Artifacts are written under `runs/<domain>/<date>-<slug>/`:
+
+```text
+map.json
+manifest.json
+manifest.proposed.json
+capture-plan.json
+capture-plan.md
+capture-results.json
+animations.json
+animations.md
+timelines/<capture-id>.json
+report.md
+run-log.md
+```
+
+Manifest captures are deliberately small. The CLI supports `hover`, `click`,
+`scroll` / `scroll-reveal`, and `boot` / `load`:
+
+```json
+{
+  "url": "https://mammothmurals.com/",
+  "viewport": [1280, 800],
+  "captures": [
+    {
+      "id": "faq-accordion",
+      "type": "click",
+      "root": "div.g_faq_item.w-dyn-item",
+      "action": "click div.g_faq_item.w-dyn-item",
+      "waitMs": 900
+    },
+    {
+      "id": "hero-load",
+      "type": "boot",
+      "boot": { "selectors": ["h1", "[class*=split]"], "ms": 4000 },
+      "waitMs": 4300
+    }
+  ]
+}
+```
+
+For automation, the CLI always finalizes with `dump({ copy:false })` or
+`bootDump({ copy:false })` and saves from the returned object. It does not read
+from the clipboard.
+
+The assembler is intentionally conservative. Registry-backed ScrollTrigger
+tweens and CSS loops are marked `measured`; CSS hover timings, callback-only
+ScrollTriggers, and structural split reveals are marked `unknown - verify` until
+a live timeline capture proves their deltas. Manifest captures can override
+labels, mechanisms, notes, confidence, and pattern IDs when a human has better
+context.
+
+`plan` reads `map.json` and writes `manifest.proposed.json` plus
+`capture-plan.md`. It proposes boot captures for split reveals, scroll captures
+for callback-only ScrollTriggers, representative CSS hovers by timing group,
+one tight accordion click when FAQ/accordion selectors are present, and a
+deduped set of representative hover candidates. Review the generated selectors
+before passing the proposed manifest to `capture`.
+
 ## Two ways to load it
 
 ### 1. Unpacked extension (primary)
