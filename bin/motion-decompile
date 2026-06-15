@@ -1846,6 +1846,12 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       preflight: result.preflight,
       pageState: result.pageState,
       page: result.page,
+      // Repair provenance (design §6). origin is always present; repair is set
+      // only when the loop ran. status above is ALWAYS the engine-measured
+      // verdict — repair is metadata about how it was reached, never overrides.
+      origin: result.origin || (result.status === 'skipped' ? undefined : 'first-try'),
+      repair: result.repair,
+      lowConfidenceDiagnosis: result.lowConfidenceDiagnosis,
     })),
   });
   appendLog(runDir, `\nSaved ${timelineCount(results)} timeline(s); ${results.length} capture result(s).\n`);

@@ -125,3 +125,38 @@ permanent two-port smoke fixture. Pending PM sign-off; not changed unilaterally.
   layers), not lost spec. Total animations 153 (99 measured) vs baseline 169
   (119) — the -16 is entirely flowfest's dedup, partly offset by +4 on ashley.
 - No source changed; this run only measures.
+
+## Repair-loop sub-table (Part 6 — schema, awaiting first repair-enabled run)
+
+The capture-repair loop (`docs/PART-5-repair-loop-design.md`) is off by default,
+so this baseline run was captured with it inert and the numbers above are the
+engine's unaided floor. When a run is captured **with** a provider
+(`--repair-cmd …`), `bin/calib-metrics` splits the headline and emits a `repair`
+block. The scoreboard then carries this sub-table, with **`ok_first_try` kept as
+the primary headline** (the engine's honest tool-quality signal); `ok_after_repair`
+is the visible increment and is never silently folded into one hit% that hides the
+floor.
+
+Format (filled per repair-enabled run; mechanical, no model judgment):
+
+| site | ok_first_try | ok_after_repair | check_first_try | check_after_repair | repair attempted | succeeded |
+|------|--------------|-----------------|-----------------|--------------------|------------------|-----------|
+| _per site_ | _engine floor_ | _loop increment_ | … | … | _entered loop_ | _ok-after-repair_ |
+
+Repair detail (per run), from `metrics.json.repair`:
+
+- **by_action** — `{att, ok}` per winning action kind (`precondition_action`,
+  `use_other_instance`, `retarget_selector`, `scroll_into_view`, …): how many
+  attempts used it vs how many it won.
+- **by_bucket** — `{att, ok}` per Part 1 failure bucket that entered the loop:
+  which residual shapes the loop actually converts.
+- **terminal** — tally of honest STOPs by cause (`genuinely_inert`,
+  `genuinely_absent`, `needs_human`, `cross_origin_iframe`, `provider_error`).
+  A `genuinely_absent`/`genuinely_inert` terminal is a **first-class result**
+  (the drift/inert long tail), not a silent empty — it is what lets the
+  scoreboard distinguish "the tool failed" from "there is nothing here to
+  capture."
+
+Expected shape on the calibration set (design §9): not a hit% leap (~5–7 captures
+gained, dominated by `precondition_action` the deterministic planner cannot
+author), plus the inert/absent long tail converted to recorded terminal verdicts.

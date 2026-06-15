@@ -164,6 +164,48 @@ const attempted = counts.ok + counts.check + counts.empty + counts.error;
 const hitRate = attempted ? counts.ok / attempted : 0;
 const usableRate = attempted ? (counts.ok + counts.check) / attempted : 0;
 
+// ---- repair provenance (design §6) -----------------------------------------
+// Split ok/check into first-try (the engine's unaided floor) vs after-repair
+// (the loop's visible increment). ok_first_try stays the primary headline; the
+// repair increment is never folded silently into one hit%. Mechanical only:
+// every number is read from each result's origin + repair block.
+const afterRepair = r => r.origin === 'after-repair';
+const okFirstTry = results.filter(r => r.status === 'ok' && !afterRepair(r)).length;
+const okAfterRepair = results.filter(r => r.status === 'ok' && afterRepair(r)).length;
+const checkFirstTry = results.filter(r => r.status === 'check' && !afterRepair(r)).length;
+const checkAfterRepair = results.filter(r => r.status === 'check' && afterRepair(r)).length;
+
+const repair = {
+  attempted: 0,
+  succeeded: 0,
+  by_action: {},
+  by_bucket: {},
+  terminal: {},
+};
+const bump = (obj, key, field) => {
+  if (!key) return;
+  if (!obj[key]) obj[key] = { att: 0, ok: 0 };
+  obj[key][field] = (obj[key][field] || 0) + 1;
+};
+for (const r of results) {
+  const rep = r.repair;
+  if (!rep || !rep.attempted) continue;
+  repair.attempted++;
+  const bucket = r.cause || 'other';
+  bump(repair.by_bucket, bucket, 'att');
+  for (const a of Array.isArray(rep.attempts) ? rep.attempts : []) {
+    bump(repair.by_action, a.action, 'att');
+  }
+  if (rep.outcome === 'ok-after-repair') {
+    repair.succeeded++;
+    bump(repair.by_bucket, bucket, 'ok');
+    bump(repair.by_action, rep.winningAction, 'ok');
+  } else if (rep.outcome === 'terminal') {
+    const tc = rep.terminalCause || 'needs_human';
+    repair.terminal[tc] = (repair.terminal[tc] || 0) + 1;
+  }
+}
+
 // ---- spec -------------------------------------------------------------------
 const animList = (anims && anims.animations) || [];
 let measured = 0, verify = 0;
@@ -261,7 +303,11 @@ const metrics = {
     proposed: proposedCount,
     results: results.length,
     ok: counts.ok,
+    ok_first_try: okFirstTry,
+    ok_after_repair: okAfterRepair,
     check: counts.check,
+    check_first_try: checkFirstTry,
+    check_after_repair: checkAfterRepair,
     empty: counts.empty,
     error: counts.error,
     skipped: counts.skipped,
@@ -269,6 +315,7 @@ const metrics = {
     hit_rate: round(hitRate),
     usable_rate: round(usableRate),
   },
+  repair,
   spec: {
     animations: animList.length,
     measured,
@@ -292,6 +339,12 @@ console.log(`calib-metrics → ${path.relative(process.cwd(), outPath)}`);
 console.log(`  site=${site} stack=[${stack.join(', ') || 'none'}] hard_fail=${hardFail}`);
 console.log(`  captures: proposed=${proposedCount} ok=${counts.ok} check=${counts.check} empty=${counts.empty} error=${counts.error} skipped=${counts.skipped} attempted=${attempted}`);
 console.log(`  hit%=${pct(hitRate)} usable%=${pct(usableRate)}`);
+console.log(`  ok: first_try=${okFirstTry} after_repair=${okAfterRepair}; check: first_try=${checkFirstTry} after_repair=${checkAfterRepair}`);
+if (repair.attempted) {
+  const term = Object.entries(repair.terminal).map(([k, v]) => `${k}=${v}`).join(' ') || '(none)';
+  const byAct = Object.entries(repair.by_action).map(([k, v]) => `${k}(${v.ok}/${v.att})`).join(' ') || '(none)';
+  console.log(`  repair: attempted=${repair.attempted} succeeded=${repair.succeeded}; by_action ${byAct}; terminal ${term}`);
+}
 console.log(`  spec: ${animList.length} anims (${measured} measured / ${verify} verify), ${timelinesWritten} timelines`);
 console.log(`  failure_causes: ${Object.entries(failureCauses).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(' ') || '(none)'}`);
 if (wrongDocument) console.log(`  wrong_document: ${wrongDocument}`);
