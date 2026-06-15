@@ -29,6 +29,11 @@ cleanup() {
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${XSERVER_PID:-}" ]]; then
+    kill "$XSERVER_PID" >/dev/null 2>&1 || true
+    wait "$XSERVER_PID" >/dev/null 2>&1 || true
+  fi
+  rm -f "$ROOT/tests/fixtures/_xorigin-shell.html"
   if [[ -n "$TMP_ASSEMBLE" ]]; then
     rm -rf "$TMP_ASSEMBLE"
   fi
@@ -212,6 +217,54 @@ SMOKE_JS='
 RESULT="$("${AB[@]}" --session "$SESSION" eval "$SMOKE_JS")"
 printf '%s\n' "$RESULT" | jq -e '.ok == true and ([.checks[]] | all(. == true))' >/dev/null
 printf '%s\n' "$RESULT" | jq '{ok, checks, samples}'
+
+# --- dominant same-origin iframe + thin-document detection (engine map()) ----
+IFRAME_URL="http://127.0.0.1:${PORT}/tests/fixtures/iframe-shell.html"
+"${AB[@]}" --session "$SESSION" --init-script "$ROOT/extension/capture-animation.js" open "$IFRAME_URL" >/dev/null
+"${AB[@]}" --session "$SESSION" wait 600 >/dev/null
+IFRAME_MAP="$("${AB[@]}" --session "$SESSION" eval '(() => window.__cap.map())()')"
+printf '%s\n' "$IFRAME_MAP" | jq -e '
+  (.dominantIframe != null) and
+  (.dominantIframe.sameOrigin == true) and
+  (.dominantIframe.accessible == true) and
+  (.dominantIframe.areaRatio > 0.6) and
+  (.dominantIframe.src | test("basic-motion")) and
+  (.recommendedTarget | test("basic-motion")) and
+  (.thinDocument.thin == true)
+' >/dev/null
+printf '%s\n' "$IFRAME_MAP" | jq '{dominantIframe, recommendedTarget, thinDocument}'
+
+# --- dominant CROSS-origin iframe detection. A second server on a different
+# --- port is a different origin, so the shell can't read the frame's document. -
+XPORT="$(
+  python3 - <<'PY'
+import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
+PY
+)"
+python3 -m http.server "$XPORT" --bind 127.0.0.1 --directory "$ROOT" >>"$SERVER_LOG" 2>&1 &
+XSERVER_PID=$!
+sleep 0.4
+XSHELL="$ROOT/tests/fixtures/_xorigin-shell.html"
+cat >"$XSHELL" <<HTML
+<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100vw;height:100vh;border:0}</style></head>
+<body><header>shell</header><iframe src="http://127.0.0.1:${PORT}/tests/fixtures/basic-motion.html"></iframe></body></html>
+HTML
+"${AB[@]}" --session "$SESSION" --init-script "$ROOT/extension/capture-animation.js" open "http://127.0.0.1:${XPORT}/tests/fixtures/_xorigin-shell.html" >/dev/null
+"${AB[@]}" --session "$SESSION" wait 700 >/dev/null
+XMAP="$("${AB[@]}" --session "$SESSION" eval '(() => window.__cap.map())()')"
+kill "$XSERVER_PID" >/dev/null 2>&1 || true
+rm -f "$XSHELL"
+printf '%s\n' "$XMAP" | jq -e '
+  (.dominantIframe != null) and
+  (.dominantIframe.sameOrigin == false) and
+  (.dominantIframe.accessible == false) and
+  (.dominantIframe.areaRatio > 0.6) and
+  (.dominantIframe.src | test("basic-motion")) and
+  (.recommendedTarget | test("basic-motion"))
+' >/dev/null
+printf '%s\n' "$XMAP" | jq '{dominantIframe}'
 
 TMP_ASSEMBLE="$(mktemp -d)"
 mkdir -p "$TMP_ASSEMBLE/timelines"

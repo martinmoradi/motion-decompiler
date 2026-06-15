@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iframe shell fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body { font-family: system-ui, sans-serif; }
+    /* A thin shell: a tiny header plus one iframe that fills the viewport.
+       This is the structural shape the dominant-iframe detector targets. */
+    header { height: 24px; font-size: 12px; padding: 4px 8px; }
+    iframe { display: block; width: 100vw; height: calc(100vh - 24px); border: 0; }
+  </style>
+</head>
+<body>
+  <header>shell</header>
+  <!-- Same-origin: served from the same local http.server as basic-motion.html. -->
+  <iframe src="./basic-motion.html" title="content"></iframe>
+</body>
+</html>

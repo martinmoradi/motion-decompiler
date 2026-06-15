@@ -109,6 +109,15 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function resolveUrl(src, base) {
+  try { return new URL(src, base).href; } catch (e) { return src; }
+}
+
+function pctText(ratio) {
+  const n = Number(ratio);
+  return Number.isFinite(n) ? `${Math.round(n * 100)}%` : 'unknown';
+}
+
 function slugify(value) {
   const slug = String(value || '')
     .trim()
@@ -714,7 +723,31 @@ function runMap(runDir, manifest, flags = {}) {
   openPage(runDir, manifest.url, viewport, [ENGINE], { openDelayMs: openDelayMs(manifest, flags) });
   waitForPageReady(runDir, 'map', manifest, flags);
   runBrowser(['wait', String(manifest.initialWaitMs || 1000)], { runDir });
-  const map = evalJson('(() => window.__cap.map())()', runDir);
+  let map = evalJson('(() => window.__cap.map())()', runDir);
+
+  // Dominant-iframe handling. A site whose real content lives in one big iframe
+  // maps as shell chrome only. For a SAME-ORIGIN frame the document is reachable
+  // and IS the content, so re-point the whole run (map + capture) at its URL.
+  // A CROSS-ORIGIN frame can't be followed silently — it is only flagged here;
+  // the finding lands in report.md and the planner marks the run.
+  const dom = map && map.dominantIframe;
+  const canRetarget = dom && dom.src && !flags.noIframeRetarget && !flags._iframeRetargeted;
+  if (canRetarget && dom.sameOrigin && dom.accessible) {
+    const target = resolveUrl(dom.src, manifest.url);
+    appendLog(runDir, `\nDominant same-origin iframe (${pctText(dom.areaRatio)} of viewport): re-targeting map+capture at ${target}\n`);
+    const from = manifest.url;
+    manifest.url = target;
+    flags._iframeRetargeted = true;
+    writeJson(path.join(runDir, 'manifest.json'), manifest);
+    openPage(runDir, target, viewport, [ENGINE], { openDelayMs: openDelayMs(manifest, flags) });
+    waitForPageReady(runDir, 'map:iframe-retarget', manifest, flags);
+    runBrowser(['wait', String(manifest.initialWaitMs || 1000)], { runDir });
+    map = evalJson('(() => window.__cap.map())()', runDir);
+    map.retargetedFrom = { url: from, src: dom.src, areaRatio: dom.areaRatio };
+  } else if (dom && dom.present !== false && dom.src) {
+    appendLog(runDir, `\nDominant cross-origin iframe (${pctText(dom.areaRatio)} of viewport): primary content is ${dom.src}. Re-run motion-decompile against that URL.\n`);
+  }
+
   writeJson(path.join(runDir, 'map.json'), map);
   appendLog(runDir, `\nSaved map: \`map.json\`\n`);
   return map;
@@ -1312,6 +1345,22 @@ function planFromMap(runDir, flags = {}) {
     addPlannedCapture(state, capture);
   }
 
+  // A cross-origin dominant iframe means every selector below resolves into the
+  // embed/shell chrome, never the real content. Don't silently proceed: record
+  // the finding so the plan, report, and metrics all carry the real URL. The
+  // shell captures are still emitted (and will be honestly attributed to
+  // wrong_document_iframe at capture time) rather than masquerading as misses.
+  const crossOriginIframe = (map.dominantIframe && map.dominantIframe.present !== false && map.dominantIframe.src
+    && !(map.dominantIframe.sameOrigin && map.dominantIframe.accessible))
+    ? { src: map.dominantIframe.src, areaRatio: map.dominantIframe.areaRatio }
+    : null;
+  if (crossOriginIframe) {
+    state.skipped.push({
+      id: 'cross-origin-iframe',
+      reason: `Primary content is a cross-origin iframe (${pctText(crossOriginIframe.areaRatio)} of viewport): ${crossOriginIframe.src}. Promoted captures below target the embed shell only; re-run motion-decompile against that URL for the real animations.`,
+    });
+  }
+
   const splitSelectors = splitBootSelectors(map);
   if (splitSelectors.length) {
     addPlannedCapture(state, {
@@ -1427,6 +1476,7 @@ function planFromMap(runDir, flags = {}) {
   const proposed = plainStrings({
     url: manifest.url,
     viewport: normalizeViewport(manifest),
+    crossOriginIframe,
     captureStrategy: manifest.captureStrategy || 'reuse-page',
     captureGroups: Object.assign({
       'main-page-after-intro': {
@@ -2028,6 +2078,26 @@ function buildReport(runDir) {
   if (manifest.viewport) lines.push(`Viewport: ${manifest.viewport.join('x')}`);
   lines.push(`Run directory: ${runDir}`);
   lines.push('');
+
+  const dom = map && map.dominantIframe;
+  const retargeted = map && map.retargetedFrom;
+  const thin = map && map.thinDocument && map.thinDocument.thin;
+  if ((dom && dom.present !== false && dom.src) || retargeted || thin) {
+    lines.push('## Primary content');
+    lines.push('');
+    if (dom && dom.present !== false && dom.src && !(dom.sameOrigin && dom.accessible)) {
+      lines.push(`> **Primary content is a cross-origin iframe: ${reportText(dom.src)}** (${pctText(dom.areaRatio)} of the viewport). The mapped document is only the embed/shell chrome, so every promoted capture targets the shell, not the real animations. Re-run \`motion-decompile\` against that URL to decompile the actual content.`);
+      lines.push('');
+    } else if (retargeted) {
+      lines.push(`> A dominant same-origin iframe (${pctText(retargeted.areaRatio)} of the viewport) was detected; the run was re-targeted from ${reportText(retargeted.url)} to its content document at **${reportText(retargeted.src)}**.`);
+      lines.push('');
+    }
+    if (thin) {
+      lines.push(`- Suspiciously thin document: scrollHeight ${map.thinDocument.scrollHeight}px vs innerHeight ${map.thinDocument.innerHeight}px, ${map.thinDocument.realContentElements} real content element(s), ${map.thinDocument.bodyTextLength} chars of body text. The top document carries little of its own content.`);
+      lines.push('');
+    }
+  }
+
   lines.push('## Artifacts');
   lines.push('');
   lines.push('- `manifest.json`');

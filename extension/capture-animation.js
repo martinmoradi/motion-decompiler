@@ -956,6 +956,110 @@
     return report;
   }
 
+  /* ---- dominant / cross-origin iframe detection ------------------------- */
+  // Some sites render their real content inside ONE big iframe: Shopify embed
+  // shells, "report" wrappers, page-builder previews. Mapping the top document
+  // then only sees chrome — every selector the planner promotes resolves into
+  // the shell, not the content, and capture quietly fails. Detect when a single
+  // iframe dominates the viewport so the pipeline can re-target a same-origin
+  // frame, or surface the real URL for a cross-origin one, instead of silently
+  // decompiling shell chrome. Structural thresholds only — no host allow-list.
+  const IFRAME_AREA_RATIO = 0.6;          // iframe must cover >= 60% of viewport
+  const THIN_DOC_HEIGHT_RATIO = 1.15;     // scrollHeight <= innerHeight * this
+  const THIN_DOC_MIN_TEXT = 400;          // ...with little real text...
+  const THIN_DOC_MIN_CONTENT_ELS = 12;    // ...or few real content elements
+
+  function viewportArea() {
+    return Math.max(1, (window.innerWidth || 0) * (window.innerHeight || 0));
+  }
+
+  // Area of an element clipped to the viewport (off-screen overflow doesn't count).
+  function visibleArea(el) {
+    const r = el.getBoundingClientRect();
+    const w = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+    const h = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+    return w * h;
+  }
+
+  // Largest block of the top document's OWN real content (text or media), so we
+  // can tell whether the iframe is genuinely bigger than the doc's own content.
+  function ownContentArea() {
+    if (!document.body) return 0;
+    let max = 0;
+    const blocks = document.body.querySelectorAll(
+      'main, section, article, [class*="content"], h1, h2, p, img, video, canvas, svg, ul, table');
+    for (const el of blocks) {
+      if (el.tagName === 'IFRAME') continue;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      const isMedia = /^(IMG|VIDEO|CANVAS|SVG)$/.test(el.tagName);
+      const txt = (el.innerText || el.textContent || '').trim();
+      if (!isMedia && txt.length < 20) continue;
+      const a = visibleArea(el);
+      if (a > max) max = a;
+    }
+    return max;
+  }
+
+  function detectDominantIframe(opts = {}) {
+    const threshold = opts.areaRatio || IFRAME_AREA_RATIO;
+    const vp = viewportArea();
+    let best = null;
+    for (const frame of document.querySelectorAll('iframe')) {
+      const cs = getComputedStyle(frame);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      const area = visibleArea(frame);
+      if (!best || area > best.area) best = { frame, area };
+    }
+    if (!best) return { present: false };
+    const ratio = best.area / vp;
+    if (ratio < threshold || best.area <= ownContentArea()) {
+      return { present: false, largestIframeRatio: r2(ratio) };
+    }
+    // Origin probe: reading contentWindow.location.href throws cross-origin.
+    let sameOrigin = false, accessible = false, doc = null, win = null;
+    try {
+      win = best.frame.contentWindow;
+      const href = win && win.location && win.location.href; // throws if cross-origin
+      sameOrigin = typeof href === 'string';
+      doc = best.frame.contentDocument;
+      accessible = !!(doc && doc.body);
+    } catch (e) { sameOrigin = false; accessible = false; }
+    let src = best.frame.getAttribute('src') || best.frame.src || null;
+    if (!src && sameOrigin) { try { src = win.location.href; } catch (e) {} }
+    const r = best.frame.getBoundingClientRect();
+    return {
+      present: true,
+      src: src || null,
+      sameOrigin,
+      accessible,
+      areaRatio: r2(ratio),
+      rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+      doc, win, // live refs; stripped before serialization in map()
+    };
+  }
+
+  // Secondary signal: a document barely taller than the viewport with almost no
+  // real content of its own — the classic "shell wrapping an iframe/app" shape.
+  function detectThinDocument() {
+    const innerHeight = window.innerHeight || 0;
+    const scrollHeight = document.documentElement ? document.documentElement.scrollHeight : 0;
+    const body = document.body;
+    const bodyText = body ? (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    let realContent = 0;
+    if (body) {
+      for (const el of body.querySelectorAll('h1,h2,h3,p,li,img,video,canvas,svg,button,a')) {
+        const txt = (el.innerText || el.textContent || '').trim();
+        if (/^(IMG|VIDEO|CANVAS|SVG)$/.test(el.tagName) || txt.length >= 8) realContent++;
+        if (realContent > THIN_DOC_MIN_CONTENT_ELS * 4) break;
+      }
+    }
+    const thin = innerHeight > 0
+      && scrollHeight <= innerHeight * THIN_DOC_HEIGHT_RATIO
+      && (bodyText.length < THIN_DOC_MIN_TEXT || realContent < THIN_DOC_MIN_CONTENT_ELS);
+    return { thin, scrollHeight, innerHeight, bodyTextLength: bodyText.length, realContentElements: realContent };
+  }
+
   const api = {
     libs: () => { const l = detectLibs(); console.log('%c[capture] libs:', 'color:#0af', l.join(', ') || '(none)'); return l; },
 
@@ -1043,6 +1147,28 @@
         recentEntries: G.logs.slice(-40).map(serializeGsapEntry),
         customEases: gsapEvidence(1, now()).customEases,
       };
+
+      // Dominant-iframe / thin-document signals. These never throw out of map():
+      // detection is best-effort and a failure just leaves the fields null.
+      out.dominantIframe = null;
+      out.recommendedTarget = null;
+      out.thinDocument = null;
+      try {
+        const dom = detectDominantIframe();
+        if (dom.present) {
+          out.dominantIframe = {
+            src: dom.src,
+            sameOrigin: dom.sameOrigin,
+            accessible: dom.accessible,
+            areaRatio: dom.areaRatio,
+            rect: dom.rect,
+          };
+          out.recommendedTarget = dom.src || null;
+        }
+        out.thinDocument = detectThinDocument();
+      } catch (e) {
+        console.warn('[capture] iframe/thin-doc detection failed:', e.message);
+      }
 
       window.__capMap = out;
       console.log('%c[capture] map', 'color:#0af', `${out.scrollTriggers.length||0} ST · ${out.hoverCandidates.length} hover cands · ${out.splitReveals.length} reveal hosts`);
