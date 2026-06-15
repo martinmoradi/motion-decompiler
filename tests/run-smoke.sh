@@ -121,6 +121,21 @@ SMOKE_JS='
     samples.spikeHeight = spikeHeight && { from: spikeHeight.from, to: spikeHeight.to };
     check("layout spike normalized", spikeHeight && spikeHeight.to !== "64000px" && parseFloat(spikeHeight.to) < 100);
 
+    document.querySelector("#nested-spike-shell").classList.remove("open");
+    await sleep(80);
+    window.__cap.scan("#nested-spike-shell", { trigger: "manual" });
+    await frame();
+    document.querySelector("#nested-spike-shell").classList.add("open");
+    await sleep(650);
+    const nestedSpike = window.__cap.dump({ copy: false });
+    const nestedHeights = nestedSpike.findings
+      .map(f => f.properties && f.properties.height)
+      .filter(Boolean)
+      .map(h => ({ from: h.from, to: h.to }));
+    samples.nestedSpikeHeights = nestedHeights;
+    check("nested layout spike normalized", nestedHeights.length >= 2 &&
+      nestedHeights.every(h => parseFloat(h.to) < 100), JSON.stringify(nestedHeights));
+
     const sprite = await captureOn("#sprite", () => {}, 750);
     const spriteFinding = sprite.findings[0];
     samples.spriteType = spriteFinding && spriteFinding.type;

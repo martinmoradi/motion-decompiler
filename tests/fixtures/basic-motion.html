@@ -99,6 +99,16 @@
       transition: height 250ms ease;
     }
     #spike-panel.open { height: 64px; }
+    #nested-spike-shell {
+      width: 240px;
+      height: 0;
+      overflow: hidden;
+      background: #f7ecd0;
+      transition: height 250ms ease;
+    }
+    #nested-spike-shell.open { height: 64px; }
+    #nested-spike-child { height: 0; }
+    #nested-spike-shell.open #nested-spike-child { height: 64000px; }
     #sprite {
       width: 32px;
       height: 32px;
@@ -152,6 +162,11 @@
     <section>
       <h2>layout spike</h2>
       <div id="spike-panel"><div>Suspicious computed height panel</div></div>
+    </section>
+
+    <section>
+      <h2>nested layout spike</h2>
+      <div id="nested-spike-shell"><div id="nested-spike-child">Absurd child inside clipped parent</div></div>
     </section>
 
     <section>

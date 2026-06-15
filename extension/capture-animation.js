@@ -434,14 +434,40 @@
     return `${r3(n)}px`;
   }
 
+  function layoutBox(rect, prop) {
+    return prop === 'height' ? rect.height : rect.width;
+  }
+
+  function clipsAxis(cs, prop) {
+    const axis = prop === 'height' ? (cs.overflowY || cs.overflow) : (cs.overflowX || cs.overflow);
+    return /hidden|clip|auto|scroll/.test(axis || '');
+  }
+
+  function nearestSaneLayoutBox(el, prop, raw) {
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (!clipsAxis(cs, prop)) continue;
+      const box = layoutBox(n.getBoundingClientRect(), prop);
+      if (Number.isFinite(box) && box > 0 && raw / box > LAYOUT_SPIKE_RATIO) return box;
+    }
+    return null;
+  }
+
   function normalizeLayoutValue(el, prop, value, rect) {
     if (prop !== 'height' && prop !== 'width') return value;
     const raw = parseFloat(value);
-    const box = prop === 'height' ? rect.height : rect.width;
+    const box = layoutBox(rect, prop);
     if (!Number.isFinite(raw) || !Number.isFinite(box) || box <= 0) return value;
     // Some sites briefly report absurd computed layout lengths while animating
     // auto/percentage wrappers. The rendered box is the useful recreation fact.
     if (raw > LAYOUT_SPIKE_MIN_PX && raw / box > LAYOUT_SPIKE_RATIO) return formatPx(box);
+    // Some wrappers also have an absurd rendered box inside a clipped parent
+    // (for example 1000x content inside an accordion grid row). In that case the
+    // visible clipping ancestor is the useful recreation fact.
+    if (raw > LAYOUT_SPIKE_MIN_PX && box > LAYOUT_SPIKE_MIN_PX) {
+      const sane = nearestSaneLayoutBox(el, prop, raw);
+      if (sane != null) return formatPx(sane);
+    }
     return value;
   }
 
