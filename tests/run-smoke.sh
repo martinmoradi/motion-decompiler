@@ -20,6 +20,8 @@ PY
 URL="http://127.0.0.1:${PORT}/tests/fixtures/basic-motion.html"
 
 node --check "$ROOT/bin/motion-decompile" >/dev/null
+node --check "$ROOT/extension/capture-animation.js" >/dev/null
+node "$ROOT/tests/decode-transform.test.js" >/dev/null
 "$ROOT/bin/motion-decompile" --help | grep -q 'scout <url>'
 "$ROOT/bin/motion-decompile" --help | grep -q 'decompile <run-dir>'
 
