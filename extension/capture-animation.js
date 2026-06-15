@@ -17,6 +17,9 @@
  *   __cap.scan('.section')               // diff-scan: find what moves in a region
  *                                        //   (for layers you cannot click —
  *                                        //    pointer-events:none, behind text)
+ *   __cap.gsap()                         // logged GSAP/CustomEase source evidence
+ *   __cap.boot({selectors:['h1'], ms:4000}) // fixed-window load/reveal recorder
+ *   __cap.bootDump()                     // finalize boot recorder output
  *   // ...now hover / scroll the thing...
  *   __cap.dump()                         // finalize -> copies .animation.json
  *
@@ -42,6 +45,9 @@
   const SETTLE_MS = 220;     // stop after this much no-change (once something moved)
   const MAX_MS = 6000;       // hard cap
   const SCAN_THROTTLE_MS = 30;
+  const GSAP_EVIDENCE_PAD_MS = 250;
+  const LAYOUT_SPIKE_RATIO = 20;
+  const LAYOUT_SPIKE_MIN_PX = 5000;
 
   const r1 = n => Math.round(n * 10) / 10;
   const r2 = n => Math.round(n * 100) / 100;
@@ -67,6 +73,250 @@
       Lottie: !!(window.lottie || window.bodymovin),
       anime: !!window.anime,
     }).filter(([, v]) => v).map(([k]) => k);
+  }
+
+  /* ---- GSAP / CustomEase source evidence -------------------------------- */
+  const G = {
+    installed: false,
+    customEaseInstalled: false,
+    logs: [],
+    customEases: [],
+    seq: 0,
+    max: 300,
+  };
+
+  const GSAP_METHODS = ['to', 'from', 'fromTo', 'set', 'delayedCall'];
+  const TIMELINE_METHODS = ['to', 'from', 'fromTo', 'set', 'call', 'add'];
+
+  function sanitize(value, depth = 0, seen = new WeakSet()) {
+    if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+    if (typeof value === 'function') return `[function ${value.name || 'anonymous'}]`;
+    if (value.nodeType === 1) return locatorFor(value);
+    if (value === window) return '[window]';
+    if (value === document) return '[document]';
+    if (depth > 3) return '[object]';
+    if (typeof value === 'object') {
+      if (seen.has(value)) return '[circular]';
+      seen.add(value);
+      if (Array.isArray(value) || value instanceof NodeList || value instanceof HTMLCollection) {
+        return [...value].slice(0, 12).map(v => sanitize(v, depth + 1, seen));
+      }
+      const out = {};
+      for (const [k, v] of Object.entries(value).slice(0, 80)) {
+        out[k] = sanitize(v, depth + 1, seen);
+      }
+      return out;
+    }
+    return String(value);
+  }
+
+  function easeName(ease) {
+    if (!ease) return null;
+    if (typeof ease === 'string') return ease;
+    return ease.name || ease.id || (ease.vars && ease.vars.name) ||
+      (ease.custom && ease.custom.id) || null;
+  }
+
+  function targetElements(targets) {
+    if (!targets) return [];
+    if (targets === window || targets === document) return [];
+    if (typeof targets === 'string') return queryAllSafe(targets);
+    if (targets.nodeType === 1) return [targets];
+    if (Array.isArray(targets) || targets instanceof NodeList || targets instanceof HTMLCollection) {
+      return [...targets].filter(el => el && el.nodeType === 1);
+    }
+    return [];
+  }
+
+  function tweenTargets(tween, fallback) {
+    try {
+      if (tween && typeof tween.targets === 'function') return tween.targets().filter(el => el && el.nodeType === 1);
+    } catch (e) {}
+    return targetElements(fallback);
+  }
+
+  function pushGsapLog(entry, targets) {
+    const e = Object.assign({ id: ++G.seq, at: r1(now()) }, entry);
+    Object.defineProperty(e, '_targets', { value: targets || [], enumerable: false });
+    G.logs.push(e);
+    if (G.logs.length > G.max) G.logs.splice(0, G.logs.length - G.max);
+    return e;
+  }
+
+  function varsEvidence(vars) {
+    const v = vars || {};
+    return {
+      duration: typeof v.duration === 'function' ? '[function]' : v.duration,
+      delay: typeof v.delay === 'function' ? '[function]' : v.delay,
+      ease: easeName(v.ease) || sanitize(v.ease),
+      stagger: sanitize(v.stagger),
+      repeat: v.repeat,
+      yoyo: v.yoyo,
+      immediateRender: v.immediateRender,
+      autoAlpha: sanitize(v.autoAlpha),
+      props: sanitize(v),
+    };
+  }
+
+  function logGsapCall(method, args, result, kind = 'gsap') {
+    const targetsArg = method === 'delayedCall' ? null : args[0];
+    const vars = method === 'fromTo' ? args[2] : (method === 'delayedCall' ? { delay: args[0], callback: args[1], params: args[2] } : args[1]);
+    const els = tweenTargets(result, targetsArg);
+    const entry = {
+      kind,
+      method,
+      target: sanitize(targetsArg),
+      targetCount: els.length,
+      targets: els.slice(0, 20).map(locatorFor),
+      vars: varsEvidence(vars),
+      position: kind === 'timeline' ? sanitize(method === 'fromTo' ? args[3] : args[2]) : undefined,
+      duration: typeof result?.duration === 'function' ? result.duration() : undefined,
+      totalDuration: typeof result?.totalDuration === 'function' ? result.totalDuration() : undefined,
+    };
+    pushGsapLog(entry, els);
+  }
+
+  function wrapMethod(obj, name, handler) {
+    if (!obj || typeof obj[name] !== 'function' || obj[name].__capWrapped) return;
+    const original = obj[name];
+    const wrapped = function(...args) {
+      const result = original.apply(this, args);
+      try { handler.call(this, name, args, result); } catch (e) { console.warn('[capture] GSAP probe failed:', e.message); }
+      return result;
+    };
+    wrapped.__capWrapped = true;
+    wrapped.__capOriginal = original;
+    obj[name] = wrapped;
+  }
+
+  function installTimelineProbe(tl) {
+    if (!tl) return;
+    const proto = Object.getPrototypeOf(tl);
+    for (const name of TIMELINE_METHODS) {
+      wrapMethod(proto || tl, name, function(method, args, result) {
+        logGsapCall(method, args, result, 'timeline');
+      });
+    }
+  }
+
+  function installGsapProbe(gsap) {
+    if (!gsap || gsap.__capProbeInstalled) return false;
+    GSAP_METHODS.forEach(name => {
+      wrapMethod(gsap, name, function(method, args, result) {
+        logGsapCall(method, args, result, 'gsap');
+      });
+    });
+    wrapMethod(gsap, 'timeline', function(method, args, result) {
+      pushGsapLog({
+        kind: 'gsap',
+        method: 'timeline',
+        target: null,
+        targetCount: 0,
+        targets: [],
+        vars: sanitize(args[0] || {}),
+        duration: typeof result?.duration === 'function' ? result.duration() : undefined,
+        totalDuration: typeof result?.totalDuration === 'function' ? result.totalDuration() : undefined,
+      }, []);
+      installTimelineProbe(result);
+    });
+    try {
+      const probe = { value: true, configurable: false };
+      Object.defineProperty(gsap, '__capProbeInstalled', probe);
+    } catch (e) { gsap.__capProbeInstalled = true; }
+    G.installed = true;
+    console.log('%c[capture] GSAP probe installed', 'color:#7b61ff');
+    return true;
+  }
+
+  function customEaseSvg(idOrEase) {
+    const CE = window.CustomEase;
+    if (!CE || typeof CE.getSVGData !== 'function' || !idOrEase) return null;
+    try { return CE.getSVGData(idOrEase, { width: 100, height: 100 }); }
+    catch (e) { return null; }
+  }
+
+  function installCustomEaseProbe(CE) {
+    if (!CE || CE.__capProbeInstalled) return false;
+    wrapMethod(CE, 'create', function(method, args, result) {
+      const id = args[0];
+      const data = args[1];
+      G.customEases.push({
+        id,
+        at: r1(now()),
+        data: sanitize(data),
+        config: sanitize(args[2]),
+        svgData: customEaseSvg(id) || customEaseSvg(result),
+      });
+      if (G.customEases.length > G.max) G.customEases.splice(0, G.customEases.length - G.max);
+    });
+    try { Object.defineProperty(CE, '__capProbeInstalled', { value: true, configurable: false }); }
+    catch (e) { CE.__capProbeInstalled = true; }
+    G.customEaseInstalled = true;
+    console.log('%c[capture] CustomEase probe installed', 'color:#7b61ff');
+    return true;
+  }
+
+  function watchGlobal(name, installer) {
+    let value = window[name];
+    if (value) installer(value);
+    try {
+      const desc = Object.getOwnPropertyDescriptor(window, name);
+      if (!desc || (desc.configurable && Object.prototype.hasOwnProperty.call(desc, 'value'))) {
+        Object.defineProperty(window, name, {
+          configurable: true,
+          enumerable: true,
+          get() { return value; },
+          set(v) { value = v; installer(v); },
+        });
+      }
+    } catch (e) {}
+    let tries = 0;
+    const id = setInterval(() => {
+      tries++;
+      if (installer(window[name]) || tries > 300) clearInterval(id);
+    }, 50);
+  }
+
+  function gsapEntriesForWindow(start, end) {
+    if (!start) return [];
+    const from = start - GSAP_EVIDENCE_PAD_MS;
+    const to = (end || now()) + GSAP_EVIDENCE_PAD_MS;
+    return G.logs.filter(e => e.at >= from && e.at <= to);
+  }
+
+  function serializeGsapEntry(entry) {
+    const clone = {};
+    for (const [k, v] of Object.entries(entry)) clone[k] = v;
+    return clone;
+  }
+
+  function relatedGsapIds(el, entries) {
+    return entries
+      .filter(e => (e._targets || []).some(target => target === el || target.contains(el) || el.contains(target)))
+      .map(e => e.id);
+  }
+
+  function gsapEvidence(start, end, findings = []) {
+    const entries = gsapEntriesForWindow(start, end);
+    const easeNames = uniq(entries.map(e => e.vars && e.vars.ease).filter(e => typeof e === 'string'));
+    const customEases = uniq([
+      ...G.customEases.map(e => e.id),
+      ...easeNames,
+    ]).map(id => {
+      const created = G.customEases.find(e => e.id === id);
+      const svgData = (created && created.svgData) || customEaseSvg(id);
+      return svgData || created ? Object.assign({ id, svgData }, created || {}) : null;
+    }).filter(Boolean);
+    for (const f of findings) {
+      const ids = relatedGsapIds(f._el, entries);
+      if (ids.length) f.gsap = { relatedEntryIds: ids };
+    }
+    return {
+      installed: G.installed,
+      customEaseInstalled: G.customEaseInstalled,
+      entries: entries.map(serializeGsapEntry),
+      customEases,
+    };
   }
 
   /* ---- transform matrix -> readable parts ------------------------------- */
@@ -113,6 +363,14 @@
     if (!el || el.nodeType !== 1) return false;
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function isMeasurable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none') return false;
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   }
@@ -167,20 +425,41 @@
   const S = { armed: false, mode: null, t0: 0, raf: 0, tracks: [], cleanup: [],
               started: false, lastChange: 0, root: null, candidates: null,
               baseline: null, lastScan: 0, trigger: null, terminationReason: null,
-              finishedAt: 0, captureSource: null };
+              finishedAt: 0, captureSource: null, captureWindowStart: 0,
+              captureWindowEnd: 0 };
+
+  function formatPx(n) {
+    return `${r3(n)}px`;
+  }
+
+  function normalizeLayoutValue(el, prop, value, rect) {
+    if (prop !== 'height' && prop !== 'width') return value;
+    const raw = parseFloat(value);
+    const box = prop === 'height' ? rect.height : rect.width;
+    if (!Number.isFinite(raw) || !Number.isFinite(box) || box <= 0) return value;
+    // Some sites briefly report absurd computed layout lengths while animating
+    // auto/percentage wrappers. The rendered box is the useful recreation fact.
+    if (raw > LAYOUT_SPIKE_MIN_PX && raw / box > LAYOUT_SPIKE_RATIO) return formatPx(box);
+    return value;
+  }
 
   function readVals(el) {
     const cs = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
     const o = {};
-    for (const p of PROPS) o[p] = cs[p];
+    for (const p of PROPS) o[p] = normalizeLayoutValue(el, p, cs[p], rect);
     return o;
   }
 
   function track(el) {
-    const locator = locatorFor(el);
-    const t = { el, sel: locator.shortSelector, locator, frames: [] };
+    const t = makeTrack(el);
     S.tracks.push(t);
     return t;
+  }
+
+  function makeTrack(el) {
+    const locator = locatorFor(el);
+    return { el, sel: locator.shortSelector, locator, frames: [] };
   }
 
   function pushFrame(t, vals) {
@@ -227,6 +506,7 @@
     if (S.started) return;
     S.started = true; S.t0 = now(); S.lastChange = 0; S.lastScan = 0;
     S.terminationReason = null; S.finishedAt = 0;
+    S.captureWindowStart = now(); S.captureWindowEnd = 0;
     if (S.mode === 'scan') {
       S.baseline = S.candidates.map(readVals);
       S.raf = requestAnimationFrame(loopScan);
@@ -258,6 +538,7 @@
   function finish(reason = 'manualDump') {
     cancelAnimationFrame(S.raf); S.raf = 0;
     S.finishedAt = now();
+    S.captureWindowEnd = S.finishedAt;
     S.terminationReason = S.terminationReason || reason;
     const moved = S.tracks.filter(t => t.frames.length > 1);
     console.log(`%c[capture] done — ${moved.length} element(s) moved. Run __cap.dump()`,
@@ -334,6 +615,7 @@
       locator: t.locator || locatorFor(t.el),
       frameCount: f.length,
     };
+    Object.defineProperty(out, '_el', { value: t.el, enumerable: false });
     if (!changed.length) { out.type = 'none'; return out; }
 
     const properties = {};
@@ -554,12 +836,96 @@
     Object.assign(S, { armed: false, mode: null, t0: 0, raf: 0, tracks: [],
       started: false, lastChange: 0, root: null, candidates: null, baseline: null,
       lastScan: 0, trigger: null, terminationReason: null, finishedAt: 0,
-      captureSource: null });
+      captureSource: null, captureWindowStart: 0, captureWindowEnd: 0 });
   }
 
   function captureDuration() {
     if (!S.started || !S.t0) return 0;
     return r1((S.finishedAt || now()) - S.t0);
+  }
+
+  /* ---- boot/load recorder ---------------------------------------------- */
+  const B = { active: false, raf: 0, tracks: [], byEl: new Map(), root: null, selectors: [],
+              startedAt: 0, endedAt: 0, ms: 4000, max: 1200, lastScan: 0,
+              terminationReason: null };
+
+  function queryBootElements() {
+    const root = resolve(B.root) || document;
+    const selectors = B.selectors.length ? B.selectors : ['h1', 'h2', 'p', '[class*="split"]', '[class*="line"]', '[class*="hero"]'];
+    const out = [];
+    for (const selector of selectors) {
+      try { out.push(...root.querySelectorAll(selector)); } catch (e) {}
+      if (out.length >= B.max) break;
+    }
+    return uniq(out).filter(isMeasurable).slice(0, B.max);
+  }
+
+  function bootLoop() {
+    const tnow = now();
+    if (tnow - B.lastScan >= SCAN_THROTTLE_MS) {
+      B.lastScan = tnow;
+      for (const el of queryBootElements()) {
+        let t = B.byEl.get(el);
+        const vals = readVals(el);
+        if (!t) {
+          t = makeTrack(el);
+          t.frames.push({ t: r1(tnow - B.startedAt), vals });
+          B.byEl.set(el, t);
+          B.tracks.push(t);
+        } else {
+          const last = t.frames[t.frames.length - 1];
+          if (!last || PROPS.some(p => last.vals[p] !== vals[p])) {
+            t.frames.push({ t: r1(tnow - B.startedAt), vals });
+          }
+        }
+      }
+    }
+    if (tnow - B.startedAt >= B.ms) return finishBoot('duration');
+    B.raf = requestAnimationFrame(bootLoop);
+  }
+
+  function finishBoot(reason = 'manualDump') {
+    cancelAnimationFrame(B.raf); B.raf = 0;
+    B.active = false;
+    B.endedAt = now();
+    B.terminationReason = B.terminationReason || reason;
+    const moved = B.tracks.filter(t => t.frames.length > 1).length;
+    console.log(`%c[capture] boot done — ${moved} element(s) moved. Run __cap.bootDump()`, 'color:#0c0');
+  }
+
+  function bootReport(opts = {}) {
+    if (B.raf) finishBoot('manualDump');
+    if (!B.endedAt) B.endedAt = now();
+    if (!B.terminationReason) B.terminationReason = B.active ? 'manualDump' : 'stopped';
+    const moved = B.tracks.filter(t => t.frames.length > 1);
+    const findings = moved.map(t => analyze(t, opts)).filter(x => x.type !== 'none');
+    const stagger = staggerSummary(findings);
+    const evidence = { gsap: gsapEvidence(B.startedAt, B.endedAt, findings) };
+    const report = {
+      meta: {
+        source: location.href,
+        capturedFrom: 'capture-animation.js',
+        libraries: detectLibs(),
+        mode: 'boot',
+        trigger: 'load',
+        captureSource: 'boot',
+        terminationReason: B.terminationReason,
+        sampledProperties: [...PROPS],
+        durationMs: r1(B.endedAt - B.startedAt),
+        elementsMoved: findings.length,
+        selectors: [...B.selectors],
+        instrumentation: {
+          gsap: evidence.gsap.installed,
+          customEase: evidence.gsap.customEaseInstalled,
+        },
+      },
+      evidence,
+      summary: summarize(findings, stagger),
+      stagger,
+      findings,
+    };
+    window.__capBootLast = report;
+    return report;
   }
 
   const api = {
@@ -585,7 +951,8 @@
           props: props.reduce((o, k) => { o[k] = typeof v[k] === 'object' ? '(obj)' : v[k]; return o; }, {}) };
       };
       const out = { libs: detectLibs(), scrollTriggers: [], hoverCandidates: [],
-        cssHovers: [], loops: [], splitReveals: [], sections: [] };
+        cssHovers: [], loops: [], splitReveals: [], sections: [],
+        gsapEvidence: null };
 
       out.sections = [...document.querySelectorAll('section, main > *')]
         .map(cssPath).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).slice(0, 40);
@@ -642,6 +1009,12 @@
         groups[hs].count++; groups[hs].kinds.add((el.className.toString().split(' ')[0]) || el.tagName.toLowerCase());
       }
       out.splitReveals = Object.values(groups).map(g => ({ host: g.host, section: g.section, count: g.count, kinds: [...g.kinds] })).slice(0, 20);
+      out.gsapEvidence = {
+        installed: G.installed,
+        customEaseInstalled: G.customEaseInstalled,
+        recentEntries: G.logs.slice(-40).map(serializeGsapEntry),
+        customEases: gsapEvidence(1, now()).customEases,
+      };
 
       window.__capMap = out;
       console.log('%c[capture] map', 'color:#0af', `${out.scrollTriggers.length||0} ST · ${out.hoverCandidates.length} hover cands · ${out.splitReveals.length} reveal hosts`);
@@ -669,6 +1042,42 @@
       arm(opts.trigger || 'hover', root);
       return this;
     },
+    boot(opts = {}) {
+      cancelAnimationFrame(B.raf);
+      Object.assign(B, {
+        active: true,
+        raf: 0,
+        tracks: [],
+        byEl: new Map(),
+        root: opts.root || null,
+        selectors: opts.selectors || ['h1', 'h2', 'p', '[class*="split"]', '[class*="line"]', '[class*="hero"]'],
+        startedAt: now(),
+        endedAt: 0,
+        ms: opts.ms || 4000,
+        max: opts.max || 1200,
+        lastScan: 0,
+        terminationReason: null,
+      });
+      B.raf = requestAnimationFrame(bootLoop);
+      console.log('%c[capture] boot recording…', 'color:#fa0', `${B.ms}ms · ${B.selectors.join(', ')}`);
+      return this;
+    },
+    bootDump(opts = {}) {
+      const report = bootReport(opts);
+      const json = JSON.stringify(report, null, 2);
+      try { navigator.clipboard.writeText(json); } catch (e) {}
+      console.log(`%c[capture] ${report.summary}`, 'color:#0c0;font-weight:bold');
+      console.log(json);
+      return report;
+    },
+    gsap() {
+      return {
+        installed: G.installed,
+        customEaseInstalled: G.customEaseInstalled,
+        entries: G.logs.map(serializeGsapEntry),
+        customEases: gsapEvidence(1, now()).customEases,
+      };
+    },
     dump(opts = {}) {
       if (S.raf) finish('manualDump');
       else if (!S.terminationReason) {
@@ -679,6 +1088,7 @@
       const findings = moved.map(t => analyze(t, opts)).filter(x => x.type !== 'none');
       const stagger = staggerSummary(findings);
       const rootLocator = S.root ? locatorFor(S.root) : null;
+      const evidence = { gsap: gsapEvidence(S.captureWindowStart, S.captureWindowEnd || now(), findings) };
       const report = {
         meta: {
           source: location.href,
@@ -693,7 +1103,12 @@
           rootLocator,
           durationMs: captureDuration(),
           elementsMoved: findings.length,
+          instrumentation: {
+            gsap: evidence.gsap.installed,
+            customEase: evidence.gsap.customEaseInstalled,
+          },
         },
+        evidence,
         summary: summarize(findings, stagger),
         stagger,
         findings,
@@ -847,8 +1262,14 @@
   })();
   api.pick = () => picker.enable();
 
+  watchGlobal('gsap', installGsapProbe);
+  watchGlobal('CustomEase', installCustomEaseProbe);
+
   window.__cap = api;
   window.__capPicker = picker;
+  if (window.__capAutoBoot) {
+    api.boot(window.__capAutoBoot === true ? {} : window.__capAutoBoot);
+  }
   console.log('%c[capture] ready', 'color:#0c0;font-weight:bold',
-    '— __cap.map() (phase 1) · __cap.on/scan + dump (phase 2) · __cap.libs() · __cap.pick()');
+    '— __cap.map() · __cap.on/scan + dump · __cap.boot/bootDump · __cap.gsap() · __cap.pick()');
 })();

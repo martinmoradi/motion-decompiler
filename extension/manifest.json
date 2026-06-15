@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Animation Capture (__cap)",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Click the toolbar button, pick an element, and get an agent-ready spec of its animation (console + clipboard). Also exposes window.__cap on every page.",
   "action": {
     "default_title": "Capture animation — click, then pick an element",
@@ -27,7 +27,7 @@
       "matches": ["<all_urls>"],
       "js": ["capture-animation.js"],
       "world": "MAIN",
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }

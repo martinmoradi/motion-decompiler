@@ -91,6 +91,14 @@
     }
     #accordion.open #accordion-panel { height: 64px; }
     #accordion-panel > div { padding: 14px; }
+    #spike-panel {
+      width: 240px;
+      height: 0;
+      overflow: hidden;
+      background: #f4dfb5;
+      transition: height 250ms ease;
+    }
+    #spike-panel.open { height: 64px; }
     #sprite {
       width: 32px;
       height: 32px;
@@ -98,6 +106,10 @@
       background-image: linear-gradient(90deg, #d63535 0 25%, #19a56a 25% 50%, #3157a4 50% 75%, #222 75% 100%);
       background-size: 128px 32px;
       animation: spriteStep 400ms steps(4) infinite;
+    }
+    #gsap-box {
+      opacity: .2;
+      transform: translateX(0) scale(1);
     }
     @keyframes spriteStep {
       from { background-position: 0 0; }
@@ -138,9 +150,75 @@
     </section>
 
     <section>
+      <h2>layout spike</h2>
+      <div id="spike-panel"><div>Suspicious computed height panel</div></div>
+    </section>
+
+    <section>
       <h2>sprite loop</h2>
       <div id="sprite" class="sprite-loop"></div>
     </section>
+
+    <section>
+      <h2>fake gsap</h2>
+      <div id="gsap-box" class="box">gsap</div>
+    </section>
   </main>
+  <script>
+    (() => {
+      const applyVars = (targets, vars = {}) => {
+        const els = typeof targets === 'string' ? [...document.querySelectorAll(targets)] : [targets].flat().filter(Boolean);
+        requestAnimationFrame(() => {
+          els.forEach(el => {
+            if (vars.x != null || vars.scale != null) {
+              const x = vars.x || 0;
+              const scale = vars.scale == null ? 1 : vars.scale;
+              el.style.transform = `translateX(${x}px) scale(${scale})`;
+            }
+            if (vars.opacity != null) el.style.opacity = vars.opacity;
+            if (vars.autoAlpha != null) {
+              el.style.opacity = vars.autoAlpha;
+              el.style.visibility = vars.autoAlpha === 0 ? 'hidden' : 'inherit';
+            }
+          });
+        });
+        return {
+          vars,
+          targets: () => els,
+          duration: () => vars.duration || 0,
+          totalDuration: () => vars.duration || 0,
+        };
+      };
+      window.gsap = {
+        to: applyVars,
+        from: applyVars,
+        fromTo(targets, fromVars, toVars) {
+          return applyVars(targets, toVars);
+        },
+        set: applyVars,
+        delayedCall(delay, callback) {
+          const id = setTimeout(callback, delay * 1000);
+          return { vars: { delay, callback }, targets: () => [], duration: () => delay, totalDuration: () => delay, kill: () => clearTimeout(id) };
+        },
+        timeline(vars = {}) {
+          return {
+            vars,
+            to: applyVars,
+            from: applyVars,
+            fromTo(targets, fromVars, toVars) { return applyVars(targets, toVars); },
+            set: applyVars,
+            call(callback) { callback(); return this; },
+            add() { return this; },
+            duration: () => 0,
+            totalDuration: () => 0,
+          };
+        },
+      };
+      window.CustomEase = {
+        create(id, data) { return { id, data }; },
+        getSVGData(id) { return `M0,100 C25,75 75,25 100,0 /* ${id} */`; },
+      };
+    })();
+  </script>
 </body>
 </html>

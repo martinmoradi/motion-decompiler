@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION="motion-smoke-$$"
 SERVER_LOG="$(mktemp)"
+export AGENT_BROWSER_CONFIRM_ACTIONS="${AGENT_BROWSER_CONFIRM_ACTIONS:-}"
+export AGENT_BROWSER_CONFIRM_INTERACTIVE="${AGENT_BROWSER_CONFIRM_INTERACTIVE:-false}"
 PORT="$(
   python3 - <<'PY'
 import socket
@@ -94,6 +96,30 @@ SMOKE_JS='
     samples.accordionProps = accordion.findings.map(f => Object.keys(f.properties || {}));
     check("accordion height captured", accordion.findings.some(f => f.properties && f.properties.height));
 
+    const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+    window.getComputedStyle = (el, ...args) => {
+      const cs = nativeGetComputedStyle(el, ...args);
+      if (el && el.id === "spike-panel") {
+        return new Proxy(cs, {
+          get(target, prop) {
+            if (prop === "height") return el.classList.contains("open") ? "64000px" : "0px";
+            const value = target[prop];
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+        });
+      }
+      return cs;
+    };
+    document.querySelector("#spike-panel").classList.remove("open");
+    await sleep(80);
+    const spike = await captureOn("#spike-panel", () => {
+      document.querySelector("#spike-panel").classList.add("open");
+    }, 650);
+    window.getComputedStyle = nativeGetComputedStyle;
+    const spikeHeight = spike.findings[0] && spike.findings[0].properties && spike.findings[0].properties.height;
+    samples.spikeHeight = spikeHeight && { from: spikeHeight.from, to: spikeHeight.to };
+    check("layout spike normalized", spikeHeight && spikeHeight.to !== "64000px" && parseFloat(spikeHeight.to) < 100);
+
     const sprite = await captureOn("#sprite", () => {}, 750);
     const spriteFinding = sprite.findings[0];
     samples.spriteType = spriteFinding && spriteFinding.type;
@@ -102,6 +128,49 @@ SMOKE_JS='
       (spriteFinding.properties && spriteFinding.properties.backgroundPosition &&
        spriteFinding.properties.backgroundPosition.type === "css-sprite")
     )));
+
+    const gsapBox = document.querySelector("#gsap-box");
+    gsapBox.removeAttribute("style");
+    await sleep(80);
+    const gsapCapture = await captureOn("#gsap-box", () => {
+      window.CustomEase.create("fixture-ease", "M0,100 C25,75 75,25 100,0");
+      window.gsap.to("#gsap-box", {
+        x: 38,
+        scale: 1.2,
+        opacity: 0.85,
+        duration: 0.2,
+        ease: "fixture-ease",
+        stagger: 0.05
+      });
+    }, 350);
+    const gsapEvidence = gsapCapture.evidence && gsapCapture.evidence.gsap;
+    const gsapEntry = gsapEvidence && gsapEvidence.entries.find(e => e.method === "to" && e.vars && e.vars.ease === "fixture-ease");
+    samples.gsapEvidence = gsapEvidence && {
+      installed: gsapEvidence.installed,
+      entryCount: gsapEvidence.entries.length,
+      customEases: gsapEvidence.customEases.map(e => e.id)
+    };
+    check("gsap probe installed", gsapEvidence && gsapEvidence.installed);
+    check("gsap tween logged", Boolean(gsapEntry));
+    check("gsap tween targets captured", gsapEntry && gsapEntry.targetCount === 1);
+    check("gsap custom ease captured", gsapEvidence.customEases.some(e => e.id === "fixture-ease" && e.svgData));
+    check("finding links gsap evidence", gsapCapture.findings.some(f => f.gsap && f.gsap.relatedEntryIds.includes(gsapEntry.id)));
+
+    gsapBox.removeAttribute("style");
+    await sleep(80);
+    window.__cap.boot({ selectors: ["#gsap-box"], ms: 280 });
+    await frame();
+    window.gsap.to("#gsap-box", { x: 52, opacity: 0.6, duration: 0.18, ease: "power2.out" });
+    await sleep(340);
+    const boot = window.__cap.bootDump();
+    samples.boot = {
+      mode: boot.meta.mode,
+      findings: boot.findings.length,
+      gsapEntries: boot.evidence.gsap.entries.length,
+    };
+    check("boot recorder reports boot mode", boot.meta.mode === "boot");
+    check("boot recorder captures motion", boot.findings.length >= 1);
+    check("boot recorder includes gsap evidence", boot.evidence.gsap.entries.some(e => e.method === "to" && e.vars.ease === "power2.out"));
 
     return { ok: true, checks, samples };
   } catch (error) {

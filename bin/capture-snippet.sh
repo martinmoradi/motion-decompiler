@@ -6,7 +6,7 @@
 # extension: it copies the engine to the clipboard so you can paste it into
 # Chrome DevTools > Sources > Snippets (one-time), then drive it from the
 # Console:
-#   __cap.on(sel) / __cap.scan(sel) / __cap.dump() / __cap.libs()
+#   __cap.on(sel) / __cap.scan(sel) / __cap.dump() / __cap.libs() / __cap.gsap()
 #
 # Chrome stores DevTools Snippets in an internal LevelDB, not a file, so there
 # is no way to drop the snippet straight in from a script — hence clipboard.
@@ -49,6 +49,9 @@ Run it (Ctrl+Enter) on any page, then in the Console:
   __cap.on('.sel',{trigger:'scroll'})   capture on scroll-into-view
   __cap.scan('.section')                find what moves in a region
                                         (use for layers you cannot click)
+  __cap.gsap()                          inspect logged GSAP/CustomEase evidence
+  __cap.boot({selectors:['h1'],ms:4000}) watch early load/reveal motion
+  __cap.bootDump()                      finalize a boot capture
   __cap.dump()                          finalize → copies the .animation.json
 EOF
         ;;
