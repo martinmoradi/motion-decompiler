@@ -229,16 +229,55 @@ Each behavior part ends by re-running the Part 0 harness and reporting the diff.
     is unchanged (arguably sharper -- the map output is now readable instead of
     flooded). The roadmap "read"/"success metric" prose still cites the original
     48; that was true at baseline and is left as the historical observation.
-- **Next:** a clean Part 0 re-baseline (real headed run, all 4 sites). It must:
-  (1) record the new 41-attempted denominator and flowfest-26 spec count as the
-  new scoreboard, never comparing hit% across the Part 4 denominator change;
-  (2) re-baseline vwlab as whatever it now is and decide keep-or-swap / whether
-  to add report-vwlab.netlify.app; (3) read a couple of the new split-host
-  scroll captures to confirm they enrich the spec rather than fragment one
-  staggered reveal. After that, Part 5 (repair-loop DESIGN checkpoint) for the
-  genuine residual: modal-only elements, real occlusion (carousel arrow,
-  stack-card), hidden inner affordances. All deterministic floor-raisers
-  (Parts 1-4) are now landed.
+- **Re-baseline — done** (615f1c3, the new post-Parts-1-4 scoreboard;
+  `docs/calibration/2026-06-15-post-parts-1-4/` per-site notes). First clean
+  real-browser run since the deterministic batch landed. **This is the
+  validation milestone: every Part 1-4 win is confirmed in a real run.**
+  - **New standing denominator: 34** (not the projected ~41 -- that assumed
+    vwlab=12 from its non-shell Part 4 state; this run vwlab reverted to the
+    shell and exposed only 5). Absolute vs the 28-baseline: **+1 ok (8->9), +3
+    check (2->5), +0 error.** hit% 28.6% -> 26.5% is NOT apples-to-apples across
+    the denominator change; do not read the dip as regression.
+  - **Honest histogram:** wrong_document_iframe 0->5 (Part 1 attributes vwlab
+    correctly now), hidden_not_visible 9->3. pseudo_element and
+    wrong_trigger_boot_vs_scroll both read 0 **by success, not blindness** -- the
+    underline failures are now ok and the boot reveal is re-routed to scroll.
+  - **Wins confirmed landed in a real run:** flowfest + enerblock pseudo
+    underlines empty->ok (scale 0->1, authoritative CSS transition, no spurious
+    rotate -- Parts 2/2.5); flowfest accordion occlusion-error->ok (icon rotate
+    0->-135deg + li height 78->273px -- Part 4c); ashley boot reveal reports
+    transform y not text reflow (Part 4b); flowfest spec 28 not 48 (lossless
+    Part 3 dedup).
+  - **Split-host spot-check passed:** ashley split-reveal-1 (clients-heading, 7
+    word items, y 96->0, ~23ms stagger) and split-reveal-5 (services-subheading,
+    19 items, ~27ms stagger) are real, distinct motion on different sections --
+    genuine enrichment. 5 of ashley's 7 split hosts usable; the 2 empties are
+    generic p/h2 hosts.
+  - **Watch (site-level, hidden by the totals):** ashley went 5 ok -> 4 ok while
+    check went 1 -> 4. Not a content loss (ashley animations 107 -> 111, measured
+    held at 77) -- the granular split hosts land more as verify-confidence
+    "check" than measured "ok". Optics, not regression.
+  - **Decision (vwlab): SWAPPED to https://report-vwlab.netlify.app.** The .io
+    URL flickers between iframe shell and real content run-to-run, so it was an
+    unreliable breadth entry that only re-exercised the iframe detector the smoke
+    fixture already guarantees. The netlify URL is the real report (no iframe,
+    ~80 hover candidates). Standing site set updated above. **Open:** its baseline
+    row still needs a one-site capture run; the scoreboard carries the old vwlab
+    shell snapshot until then (non-blocking).
+- **Strategic read:** the deterministic batch did exactly what it was scoped to.
+  It was never going to move hit% much (it raises the floor and cleans/honest-ifies
+  the spec); the run confirms hit% is flat-but-honest while spec quality and
+  attribution jumped. **The remaining hit% lever is the residual, and it is now
+  sized:** post-swap the LLM-repairable failures are occlusion (7, the new #1) +
+  inert_representative (5) + hidden_not_visible (3) = ~15. That is precisely Part
+  5's target.
+- **Next: Part 5 (repair-loop DESIGN checkpoint).** Design-only, browser-free, so
+  any clean context (Codex fine). It produces the diagnose-and-retry contracts for
+  the genuine residual above (real occlusion, inert reps, hidden inner
+  affordances); the PM reviews and greenlights the build (Part 6) separately. Side
+  task whenever the headed browser is up: capture report-vwlab.netlify.app's
+  baseline row to complete the standing scoreboard. All deterministic
+  floor-raisers (Parts 1-4) are landed.
 
 ---
 
@@ -271,11 +310,15 @@ THE STANDING SITE SET (do not change without telling the PM):
   - ashleybrookecs   https://ashleybrookecs.com/
   - enerblock        https://enerblock.net/en/
   - flowfest         https://www.flowfest.co.uk/
-  - vwlab            https://vwlab.io/pages/report   (was the cross-origin-iframe
-        regression case; it has since DRIFTED off the embed shell, so it no
-        longer reproduces that. The cross-origin guarantee now lives in a
-        permanent two-port smoke fixture, not this URL. vwlab is pending a
-        keep-or-swap decision; report what it actually is now and recommend.)
+  - report-vwlab     https://report-vwlab.netlify.app   (SWAPPED IN 2026-06-15,
+        replaces vwlab.io/pages/report. That URL flickered between a cross-origin
+        iframe shell and real content between runs, an unreliable breadth entry.
+        This points straight at the real report page: no iframe, ~80 hover
+        candidates, 11 css-hovers, 4 loops, 10 proposed captures. The
+        cross-origin-iframe regression is pinned by the permanent two-port smoke
+        fixture, so the live set no longer needs to carry it. Its baseline row is
+        pending a one-site capture run; until then the scoreboard shows the old
+        vwlab shell snapshot.)
 
 PER-SITE PROCEDURE (identical for all 4, real headed browser per CLAUDE.md, use
 the repo wrapper bin/capture-browser, a unique AGENT_BROWSER_SESSION per site):
