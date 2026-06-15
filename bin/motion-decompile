@@ -2323,6 +2323,7 @@ function assembleSpec(runDir) {
     animations,
     unspecced: manifest.unspecced || [],
   });
+  tagVendorAnimations(spec);
 
   if (map.hoverCandidates && map.hoverCandidates.length) {
     const captured = new Set((manifest.captures || []).map((capture, index) => captureId(capture, index)));
@@ -2363,6 +2364,58 @@ function confidenceCounts(animations) {
   return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 }
 
+// Known third-party widgets / payment buttons / consent banners that inject
+// their own @keyframes or transitions into host pages. Their motion is real but
+// it isn't the *site's* signature, so matches are de-ranked out of the signature
+// tier (kept in the spec, labeled with the matched source). Maintainable: add a
+// { source, re } row to extend coverage. Matched against an animation's id,
+// label, selector, and keyframe-name states.
+const VENDOR_ANIMATION_DENYLIST = [
+  { source: 'Shopify Shop Pay / accelerated checkout', re: /acceleratedcheckout|shop-?pay|shopify-payment-button|wallet-cart-button|dynamic-checkout/i },
+  { source: 'Intercom', re: /\bintercom\b/i },
+  { source: 'Drift', re: /\bdrift-(?:widget|frame|controller)/i },
+  { source: 'Zendesk / Zopim', re: /zendesk|zopim|\bzewidget/i },
+  { source: 'Tawk.to', re: /\btawk[-_]?(?:to|chat|widget)?/i },
+  { source: 'Crisp', re: /crisp-client/i },
+  { source: 'HubSpot', re: /hubspot|hs-(?:web-interactives|messages|forms|shadow)/i },
+  { source: 'OneTrust consent', re: /onetrust|optanon/i },
+  { source: 'Cookiebot consent', re: /cookiebot|cookieconsent/i },
+  { source: 'Osano consent', re: /\bosano\b/i },
+  { source: 'CookieYes consent', re: /cookieyes|\bcky-/i },
+  { source: 'Google reCAPTCHA', re: /grecaptcha|recaptcha/i },
+  { source: 'Stripe', re: /__privatestripe|stripe-button/i },
+  { source: 'Klaviyo', re: /klaviyo|kl-private/i },
+  { source: 'Calendly', re: /calendly/i },
+];
+
+function vendorAnimationMatch(animation) {
+  const haystack = [
+    animation.id,
+    animation.label,
+    animation.selector,
+    animation.lead?.selector,
+    animation.lead?.from?.state,
+    animation.lead?.to?.state,
+  ].filter(Boolean).join(' ');
+  for (const entry of VENDOR_ANIMATION_DENYLIST) {
+    if (entry.re.test(haystack)) return entry.source;
+  }
+  return null;
+}
+
+// Flag vendor/injected animations so the renderer can keep them in the spec but
+// out of the signature tier, with the matched source recorded for humans.
+function tagVendorAnimations(spec) {
+  for (const animation of spec.animations || []) {
+    const source = vendorAnimationMatch(animation);
+    if (!source) continue;
+    animation.vendor = source;
+    const note = `Third-party/injected animation (${source}); de-ranked from the signature tier.`;
+    animation.notes = animation.notes ? `${animation.notes} ${note}` : note;
+  }
+  return spec;
+}
+
 function signatureScore(animation) {
   let score = 0;
   if (animation.timelineRef && /^timelines\//.test(animation.timelineRef)) score += 100;
@@ -2377,13 +2430,15 @@ function signatureScore(animation) {
 function renderAnimationsMarkdown(spec) {
   const lines = [];
   const animations = spec.animations || [];
-  const signature = animations
+  const nonVendor = animations.filter(animation => !animation.vendor);
+  const vendor = animations.filter(animation => animation.vendor);
+  const signature = nonVendor
     .filter(animation => !animation.empty && (animation.timelineRef || ['load', 'scroll'].includes(animation.trigger) || Number(animation.layers || 0) >= 5))
     .sort((a, b) => signatureScore(b) - signatureScore(a))
     .slice(0, 12);
-  const signatureSet = new Set((signature.length ? signature : animations.slice(0, 8)).map(animation => animation.id));
-  const signatureItems = signature.length ? signature : animations.slice(0, 8);
-  const polish = animations.filter(animation => !signatureSet.has(animation.id) && animation.confidence === 'measured');
+  const signatureItems = signature.length ? signature : nonVendor.slice(0, 8);
+  const signatureSet = new Set(signatureItems.map(animation => animation.id));
+  const polish = animations.filter(animation => !signatureSet.has(animation.id) && animation.confidence === 'measured' && !animation.vendor);
   const needsVerify = animations.filter(animation => animation.confidence !== 'measured');
 
   lines.push('# Animation Spec');
@@ -2409,6 +2464,15 @@ function renderAnimationsMarkdown(spec) {
   lines.push('## Polish');
   if (polish.length) polish.forEach(animation => lines.push(animationLine(animation)));
   else lines.push('- None identified.');
+  lines.push('');
+  lines.push('## Third-party / vendor (de-ranked)');
+  if (vendor.length) {
+    for (const animation of vendor) {
+      lines.push(`- **${reportText(animation.label || animation.id)}** (${reportText(animation.id)}) · source: ${reportText(animation.vendor)} · ${reportText(animation.mechanism)} · kept in spec, excluded from signature.`);
+    }
+  } else {
+    lines.push('- None detected.');
+  }
   lines.push('');
   lines.push('## Needs verify');
   if (needsVerify.length) {
