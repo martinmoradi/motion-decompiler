@@ -57,10 +57,11 @@ the repo wrapper instead of raw `agent-browser`:
 ./bin/capture-browser set viewport 1280 800
 ```
 
-The wrapper defaults `AGENT_BROWSER_SESSION=decompile`, preserves Martin's
-Hyprland floating/pinned placement with `AGENT_BROWSER_ARGS=--class=claude-mcp`,
-and passes `--confirm-actions "" --confirm-interactive false` on every command
-so one-off shell exports cannot be lost between tool calls.
+The wrapper defaults `AGENT_BROWSER_SESSION=decompile`, injects
+`--args "--class=claude-mcp"` only on `open` commands for Martin's
+Hyprland floating/pinned placement, and passes
+`--confirm-actions "" --confirm-interactive false` on every command so one-off
+shell exports cannot be lost between tool calls.
 
 Agents should finalize with `__cap.dump({copy:false})` or
 `__cap.bootDump({copy:false})`, then save via `window.__capLast` /

@@ -29,11 +29,12 @@ class:
 ./bin/capture-browser set viewport 1280 800
 ```
 
-`bin/capture-browser` defaults `AGENT_BROWSER_SESSION=decompile`, sets the
-Chromium class to `claude-mcp` for the floating second-monitor rule, and passes
-`--confirm-actions "" --confirm-interactive false` every time. Agents should
-save JSON from `window.__capLast` / `window.__capBootLast` after calling
-`dump({ copy:false })` or `bootDump({ copy:false })`.
+`bin/capture-browser` defaults `AGENT_BROWSER_SESSION=decompile`, injects
+`--args "--class=claude-mcp"` only on `open` commands for the floating
+second-monitor rule, and passes `--confirm-actions "" --confirm-interactive false`
+every time. Agents should save JSON from `window.__capLast` /
+`window.__capBootLast` after calling `dump({ copy:false })` or
+`bootDump({ copy:false })`.
 
 ## Two ways to load it
 

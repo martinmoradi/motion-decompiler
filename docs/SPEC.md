@@ -243,9 +243,12 @@ General shape: **position → arm → trigger → wait → dump**, all by select
 engine, `close` then `open` (a `reload` re-runs the old content). On Martin's
 trusted local machine, use `./bin/capture-browser` for all capture commands.
 It defaults `AGENT_BROWSER_SESSION=decompile`, keeps the headed Chromium window
-in the Hyprland floating/pinned rule with `AGENT_BROWSER_ARGS=--class=claude-mcp`,
-and passes `--confirm-actions "" --confirm-interactive false` on every call.
-Pass complex JS to `eval` as an IIFE via a temp file.
+in the Hyprland floating/pinned rule by injecting
+`--args "--class=claude-mcp"` only on `open`, and passes
+`--confirm-actions "" --confirm-interactive false` on every call. Do not set
+`AGENT_BROWSER_ARGS` globally for the wrapper; follow-up commands can otherwise
+attach to a fresh headless session. Pass complex JS to `eval` as an IIFE via a
+temp file.
 
 ---
 

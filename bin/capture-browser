@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 # Trusted local agent-browser wrapper for motion capture.
 #
-# It keeps Martin's Hyprland placement behavior by defaulting Chromium's class to
-# claude-mcp, and it disables agent-browser's interactive action confirmations on
-# every invocation instead of relying on exported shell state.
+# It keeps Martin's Hyprland placement behavior by adding Chromium's class to
+# open commands, and it disables agent-browser's interactive action confirmations
+# on every invocation instead of relying on exported shell state.
 
 set -euo pipefail
 
 export AGENT_BROWSER_SESSION="${AGENT_BROWSER_SESSION:-decompile}"
-export AGENT_BROWSER_ARGS="${AGENT_BROWSER_ARGS:---class=claude-mcp}"
 export AGENT_BROWSER_CONFIRM_ACTIONS="${AGENT_BROWSER_CONFIRM_ACTIONS-}"
 export AGENT_BROWSER_CONFIRM_INTERACTIVE="${AGENT_BROWSER_CONFIRM_INTERACTIVE:-false}"
 
-exec agent-browser --confirm-actions "${AGENT_BROWSER_CONFIRM_ACTIONS}" --confirm-interactive false "$@"
+base=(agent-browser --confirm-actions "${AGENT_BROWSER_CONFIRM_ACTIONS}" --confirm-interactive false)
+
+has_arg_flag=false
+for arg in "$@"; do
+  if [[ "$arg" == "--args" || "$arg" == --args=* ]]; then
+    has_arg_flag=true
+    break
+  fi
+done
+
+if [[ "${1:-}" == "open" && "$has_arg_flag" == false && -z "${AGENT_BROWSER_ARGS+x}" ]]; then
+  exec "${base[@]}" "$@" --args "--class=claude-mcp"
+fi
+
+exec "${base[@]}" "$@"
