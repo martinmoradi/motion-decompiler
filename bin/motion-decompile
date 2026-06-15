@@ -731,6 +731,26 @@ function selectorFromAction(action) {
   return null;
 }
 
+// Human label for the real action a capture performs (hover/click/...), used in
+// preflight + failure messages so a hover/click failure isn't mislabeled
+// "scroll target". Prefers the action verb, then the capture type, then the
+// caller-supplied fallback. Also feeds Part 0 failure-cause bucketing.
+const POINTER_ACTIONS = ['click', 'dblclick', 'hover', 'focus'];
+function actionLabel(action, type, fallback = 'target') {
+  const verb = (item) => {
+    if (item && typeof item === 'object') return item.command || null;
+    try { return item != null ? splitAction(item).command : null; } catch { return null; }
+  };
+  // A capture action can be a compound array (e.g. ["wait 100", "hover .x"]);
+  // the meaningful verb is the pointer action, wherever it sits.
+  for (const item of Array.isArray(action) ? action : [action]) {
+    const command = verb(item);
+    if (command && POINTER_ACTIONS.includes(command)) return command;
+  }
+  if (type && POINTER_ACTIONS.includes(type)) return type;
+  return fallback;
+}
+
 function runAction(action, runDir) {
   if (!action) return;
   if (Array.isArray(action)) {
@@ -1061,7 +1081,7 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
       const scrollTarget = capture.scrollTarget || capture.root || actionSelector;
       const preflights = [];
       if (scrollTarget && type !== 'scroll' && type !== 'scroll-reveal') {
-        const presence = preflightPresence(runDir, scrollTarget, 'scroll target', capture);
+        const presence = preflightPresence(runDir, scrollTarget, actionLabel(action, type, 'scroll target'), capture);
         if (presence) preflights.push(presence);
         runBrowser(['scrollintoview', scrollTarget], { runDir });
         runBrowser(['wait', String(capture.settleMs || 250)], { runDir });
