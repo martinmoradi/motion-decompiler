@@ -1,0 +1,278 @@
+#!/usr/bin/env node
+'use strict';
+/*
+ * calib-metrics — mechanical metrics extractor for the calibration harness.
+ *
+ * Input:  a motion-decompile run directory.
+ * Output: <run_dir>/metrics.json in the fixed calibration schema, and a short
+ *         human summary on stdout.
+ *
+ * This script applies NO model judgment. Every number is sourced from the run
+ * artifacts (capture-results.json, animations.json/.md, map.json,
+ * manifest.proposed.json, page-state.json) and every failure_cause bucket is
+ * assigned by the documented keyword map in bucketCause() below. If a reason
+ * string does not match any rule it lands in "other" — which is itself a
+ * signal that the tool's failure reasons need to be richer.
+ *
+ * Usage:
+ *   bin/calib-metrics <run_dir> [--site <name>] [--url <url>] [--hard-fail <where>]
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+// ---- arg parsing -----------------------------------------------------------
+const argv = process.argv.slice(2);
+if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help') {
+  console.error('usage: bin/calib-metrics <run_dir> [--site name] [--url url] [--hard-fail where]');
+  process.exit(argv.length === 0 ? 1 : 0);
+}
+const runDir = path.resolve(argv[0]);
+const opt = { site: null, url: null, hardFail: null };
+for (let i = 1; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--site') opt.site = argv[++i];
+  else if (a === '--url') opt.url = argv[++i];
+  else if (a === '--hard-fail') opt.hardFail = argv[++i] || 'unknown';
+  else if (a === '--date') opt.date = argv[++i];
+}
+
+// ---- helpers ----------------------------------------------------------------
+function readJSON(p) {
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
+}
+function len(x) { return Array.isArray(x) ? x.length : 0; }
+
+/*
+ * Documented keyword map. Rules are checked top to bottom; first match wins.
+ * Buckets (fixed vocabulary):
+ *   occlusion | hidden_not_visible | inert_representative | pseudo_element |
+ *   wrong_trigger_boot_vs_scroll | wrong_document_iframe | vendor_animation | other
+ */
+function bucketCause(result) {
+  const status = result.status;
+  const reason = String(result.error || result.summary || '').toLowerCase();
+  const selector = String(result.root || result.selector || '').toLowerCase();
+  const hay = reason + ' ' + selector;
+
+  // Cross-origin iframe / wrong document. The current tool does NOT yet emit
+  // such a reason string (it surfaces as "no visible elements"), so this rule
+  // only fires once the iframe-detection fix lands and the reason gets richer.
+  if (/cross-origin|crossorigin|wrong document|different document|\biframe\b/.test(hay)) {
+    return 'wrong_document_iframe';
+  }
+  // Occlusion: something covers the target's click point.
+  if (/covered by|center is covered|is covered|occlud/.test(reason)) {
+    return 'occlusion';
+  }
+  // Pseudo-element motion (::after/::before underlines etc.) that capture can't
+  // read. Only fires when the reason or selector explicitly implicates one.
+  if (/::after|::before|pseudo-element|pseudo element/.test(hay)) {
+    return 'pseudo_element';
+  }
+  // Element absent or not visible / zero-box.
+  if (/no visible elements|not found|matched no|no matching|0x0|zero size|not visible|display:\s*none|hidden/.test(reason)) {
+    return 'hidden_not_visible';
+  }
+  // Wrong trigger: armed as one mode but the motion fires in another
+  // (boot vs scroll). Tool does not emit this explicitly yet.
+  if (/boot.*scroll|scroll.*boot|wrong trigger|armed.*before|too early|never fired|trigger mismatch/.test(reason)) {
+    return 'wrong_trigger_boot_vs_scroll';
+  }
+  // Vendor library's own keyframes captured instead of authored motion.
+  if (/\bw-|webflow|gsap-|vendor keyframe|library keyframe|@keyframes (spin|rotate|w-)/.test(reason)) {
+    return 'vendor_animation';
+  }
+  // Inert representative: the element was reachable/hittable but produced no
+  // motion ("no animation captured" / "no motion" / "0 moved").
+  if (status === 'empty' || /no animation captured|no motion|0 moved|nothing moved|no layers/.test(reason)) {
+    return 'inert_representative';
+  }
+  return 'other';
+}
+
+// ---- locate run subdir if a parent was passed -------------------------------
+let dir = runDir;
+if (!fs.existsSync(path.join(dir, 'capture-results.json'))) {
+  // maybe a site parent dir was passed; pick newest subdir holding a run
+  try {
+    const subs = fs.readdirSync(dir)
+      .map(s => path.join(dir, s))
+      .filter(p => { try { return fs.statSync(p).isDirectory() && fs.existsSync(path.join(p, 'capture-results.json')); } catch (e) { return false; } })
+      .sort();
+    if (subs.length) dir = subs[subs.length - 1];
+  } catch (e) { /* ignore */ }
+}
+
+// ---- load artifacts ---------------------------------------------------------
+const captureResults = readJSON(path.join(dir, 'capture-results.json'));
+const proposed = readJSON(path.join(dir, 'manifest.proposed.json'));
+const manifest = readJSON(path.join(dir, 'manifest.json'));
+const map = readJSON(path.join(dir, 'map.json'));
+const anims = readJSON(path.join(dir, 'animations.json'));
+const pageState = readJSON(path.join(dir, 'page-state.json'));
+
+const hardFail = !!opt.hardFail || !captureResults;
+
+// ---- stack ------------------------------------------------------------------
+let stack = [];
+if (map && Array.isArray(map.libs)) stack = map.libs;
+else if (anims && anims.meta && Array.isArray(anims.meta.stack)) stack = anims.meta.stack;
+
+// ---- url / site -------------------------------------------------------------
+let url = opt.url
+  || (manifest && manifest.url)
+  || (proposed && proposed.url)
+  || (anims && anims.meta && anims.meta.url)
+  || null;
+let site = opt.site;
+if (!site) {
+  // derive from the site-parent directory name
+  site = path.basename(path.dirname(dir)).replace(/^www\./, '');
+}
+
+// ---- captures ---------------------------------------------------------------
+const results = (captureResults && captureResults.results) || [];
+const proposedCount = (proposed && len(proposed.captures))
+  || (manifest && len(manifest.captures))
+  || results.length;
+
+const counts = { ok: 0, check: 0, empty: 0, error: 0, skipped: 0 };
+for (const r of results) {
+  if (counts[r.status] === undefined) counts[r.status] = 0;
+  counts[r.status]++;
+}
+// captures present in the proposed manifest that never produced a result
+const notRun = Math.max(0, proposedCount - results.length);
+counts.skipped += notRun;
+
+const attempted = counts.ok + counts.check + counts.empty + counts.error;
+const hitRate = attempted ? counts.ok / attempted : 0;
+const usableRate = attempted ? (counts.ok + counts.check) / attempted : 0;
+
+// ---- spec -------------------------------------------------------------------
+const animList = (anims && anims.animations) || [];
+let measured = 0, verify = 0;
+for (const a of animList) {
+  const c = String(a.confidence || '').toLowerCase();
+  if (c === 'measured') measured++;
+  else verify++; // "unknown - verify" and anything non-measured
+}
+let timelinesWritten = 0;
+const tlDir = path.join(dir, 'timelines');
+if (fs.existsSync(tlDir)) {
+  try { timelinesWritten = fs.readdirSync(tlDir).filter(f => f.endsWith('.json')).length; } catch (e) {}
+}
+
+// ---- map counts -------------------------------------------------------------
+const mapCounts = {
+  scroll_triggers: map ? len(map.scrollTriggers) : 0,
+  hover_candidates: map ? len(map.hoverCandidates) : 0,
+  css_hovers: map ? len(map.cssHovers) : 0,
+  loops: map ? len(map.loops) : 0,
+  split_reveals: map ? len(map.splitReveals) : 0,
+};
+
+// ---- failure causes ---------------------------------------------------------
+const failureCauses = {
+  occlusion: 0, hidden_not_visible: 0, inert_representative: 0, pseudo_element: 0,
+  wrong_trigger_boot_vs_scroll: 0, wrong_document_iframe: 0, vendor_animation: 0, other: 0,
+};
+const topFailures = [];
+for (const r of results) {
+  if (r.status === 'ok' || r.status === 'check') continue;
+  const cause = bucketCause(r);
+  failureCauses[cause]++;
+  topFailures.push({
+    id: r.id,
+    type: r.type,
+    status: r.status,
+    cause,
+    note: String(r.error || r.summary || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+  });
+}
+// worst first: error before empty, then by id
+topFailures.sort((a, b) => (a.status === b.status ? a.id.localeCompare(b.id) : (a.status === 'error' ? -1 : 1)));
+
+// ---- wrong_document (iframe the tool flagged) -------------------------------
+// Forward-compatible: read whatever field a future iframe-detection fix emits.
+// Today the tool flags nothing, so this stays null even on the vwlab embed-shell.
+let wrongDocument = null;
+const ifaceCandidates = [
+  map && (map.wrongDocument || map.crossOriginIframe || map.flaggedIframe),
+  map && map.iframe && (map.iframe.src || map.iframe),
+  map && Array.isArray(map.iframes) && map.iframes[0] && (map.iframes[0].src || map.iframes[0]),
+];
+for (const c of ifaceCandidates) {
+  if (c && typeof c === 'string') { wrongDocument = c; break; }
+  if (c && typeof c === 'object' && c.src) { wrongDocument = c.src; break; }
+}
+if (!wrongDocument && pageState && Array.isArray(pageState.records)) {
+  for (const rec of pageState.records) {
+    const s = rec && rec.state;
+    if (s && (s.crossOriginIframe || s.iframeSrc)) { wrongDocument = s.crossOriginIframe || s.iframeSrc; break; }
+  }
+}
+
+// ---- notable wins (cleanest measured captures; agent picks the final 3) -----
+const notableWins = results
+  .filter(r => r.status === 'ok')
+  .map(r => ({ id: r.id, type: r.type, findings: r.findings || 0, summary: String(r.summary || '').replace(/\s+/g, ' ').trim().slice(0, 200) }))
+  .sort((a, b) => b.findings - a.findings)
+  .slice(0, 5);
+
+// ---- date -------------------------------------------------------------------
+let date = opt.date;
+if (!date) {
+  // prefer the run's own capturedAt, else derive from dir name, else leave blank
+  if (captureResults && captureResults.capturedAt) date = String(captureResults.capturedAt).slice(0, 10);
+  else { const m = path.basename(dir).match(/(\d{4}-\d{2}-\d{2})/); if (m) date = m[1]; }
+}
+
+// ---- assemble ---------------------------------------------------------------
+const round = x => Math.round(x * 1000) / 1000;
+const metrics = {
+  site,
+  url,
+  run_dir: path.relative(process.cwd(), dir) || dir,
+  date: date || null,
+  stack,
+  hard_fail: hardFail,
+  captures: {
+    proposed: proposedCount,
+    results: results.length,
+    ok: counts.ok,
+    check: counts.check,
+    empty: counts.empty,
+    error: counts.error,
+    skipped: counts.skipped,
+    attempted,
+    hit_rate: round(hitRate),
+    usable_rate: round(usableRate),
+  },
+  spec: {
+    animations: animList.length,
+    measured,
+    verify,
+    timelines_written: timelinesWritten,
+  },
+  map: mapCounts,
+  failure_causes: failureCauses,
+  wrong_document: wrongDocument,
+  notable_wins: notableWins,
+  top_failures: topFailures,
+};
+if (opt.hardFail) metrics.hard_fail_where = opt.hardFail;
+
+const outPath = path.join(dir, 'metrics.json');
+fs.writeFileSync(outPath, JSON.stringify(metrics, null, 2) + '\n');
+
+// ---- stdout summary ---------------------------------------------------------
+const pct = x => (x * 100).toFixed(0) + '%';
+console.log(`calib-metrics → ${path.relative(process.cwd(), outPath)}`);
+console.log(`  site=${site} stack=[${stack.join(', ') || 'none'}] hard_fail=${hardFail}`);
+console.log(`  captures: proposed=${proposedCount} ok=${counts.ok} check=${counts.check} empty=${counts.empty} error=${counts.error} skipped=${counts.skipped} attempted=${attempted}`);
+console.log(`  hit%=${pct(hitRate)} usable%=${pct(usableRate)}`);
+console.log(`  spec: ${animList.length} anims (${measured} measured / ${verify} verify), ${timelinesWritten} timelines`);
+console.log(`  failure_causes: ${Object.entries(failureCauses).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(' ') || '(none)'}`);
+if (wrongDocument) console.log(`  wrong_document: ${wrongDocument}`);
