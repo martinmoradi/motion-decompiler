@@ -204,29 +204,125 @@ function ok(name, cond) {
 
 // ── validation + apply unit coverage (defense-in-depth) ──────────────────────
 {
-  ok('validate: unknown kind invalid', m.validateRepairOutput({ action: { kind: 'nope' } }).valid === false);
-  ok('validate: precondition needs actions[]', m.validateRepairOutput({ action: { kind: 'precondition_action' } }).valid === false);
-  ok('validate: precondition rejects unknown step', m.validateRepairOutput({ action: { kind: 'precondition_action', actions: ['frobnicate .x'] } }).valid === false);
-  ok('validate: precondition accepts recipe steps', m.validateRepairOutput({ action: { kind: 'precondition_action', actions: ['click .x', 'wait 400'] } }).valid === true);
-  ok('validate: retarget needs selector/nth', m.validateRepairOutput({ action: { kind: 'retarget_selector' } }).valid === false);
-  ok('validate: rootCause coerced to ambiguous', m.validateRepairOutput({ action: { kind: 'terminal_give_up' }, rootCause: 'made_up' }).repair.rootCause === 'ambiguous');
-  ok('validate: confidence clamped 0..1', m.validateRepairOutput({ action: { kind: 'terminal_give_up' }, confidence: 9 }).repair.confidence === 1);
+  // Helper: a well-formed output around a given action (valid confidence etc.).
+  const out = (action, extra = {}) => Object.assign({ diagnosis: 'd', rootCause: 'occlusion', confidence: 0.8, action, successCriterion: { expect: 'moved' } }, extra);
+
+  ok('validate: unknown kind invalid', m.validateRepairOutput(out({ kind: 'nope' })).valid === false);
+  ok('validate: precondition needs actions[]', m.validateRepairOutput(out({ kind: 'precondition_action' })).valid === false);
+  ok('validate: precondition rejects unknown string step', m.validateRepairOutput(out({ kind: 'precondition_action', actions: ['frobnicate .x'] })).valid === false);
+  ok('validate: precondition accepts string recipe steps', m.validateRepairOutput(out({ kind: 'precondition_action', actions: ['click .x', 'wait 400'] })).valid === true);
+  // SF6: object-form { command } steps are checked against the SAME verb set.
+  ok('validate: precondition accepts good object step', m.validateRepairOutput(out({ kind: 'precondition_action', actions: [{ command: 'click', selector: '.x' }] })).valid === true);
+  ok('validate: precondition rejects bad object-step verb', m.validateRepairOutput(out({ kind: 'precondition_action', actions: [{ command: 'frobnicate' }] })).valid === false);
+  ok('validate: precondition accepts { waitMs } object step', m.validateRepairOutput(out({ kind: 'precondition_action', actions: [{ waitMs: 200 }] })).valid === true);
+  ok('validate: precondition rejects non-numeric waitMs', m.validateRepairOutput(out({ kind: 'precondition_action', actions: [{ waitMs: 'soon' }] })).valid === false);
+  ok('validate: precondition rejects empty object step', m.validateRepairOutput(out({ kind: 'precondition_action', actions: [{}] })).valid === false);
+
+  // MF2: nth-only retarget / use_other_instance is rejected (not a silent no-op).
+  ok('validate: retarget needs concrete selector', m.validateRepairOutput(out({ kind: 'retarget_selector' })).valid === false);
+  ok('validate: retarget nth-only rejected', m.validateRepairOutput(out({ kind: 'retarget_selector', nth: 2 })).valid === false);
+  ok('validate: use_other_instance nth-only rejected', m.validateRepairOutput(out({ kind: 'use_other_instance', nth: 1 })).valid === false);
+  ok('validate: retarget with selector valid', m.validateRepairOutput(out({ kind: 'retarget_selector', selector: '.p' })).valid === true);
+  ok('validate: retarget blank selector rejected', m.validateRepairOutput(out({ kind: 'retarget_selector', selector: '   ' })).valid === false);
+  // MF2: retarget_iframe frameSelector-only is rejected (only url is implemented).
+  ok('validate: retarget_iframe frameSelector-only rejected', m.validateRepairOutput(out({ kind: 'retarget_iframe', frameSelector: 'iframe.embed' })).valid === false);
+  ok('validate: retarget_iframe with url valid', m.validateRepairOutput(out({ kind: 'retarget_iframe', url: 'https://x.test/' })).valid === true);
+
+  // SF6: confidence must be a real number.
+  ok('validate: missing confidence invalid', m.validateRepairOutput({ action: { kind: 'terminal_give_up' }, rootCause: 'ambiguous' }).valid === false);
+  ok('validate: non-numeric confidence invalid', m.validateRepairOutput({ action: { kind: 'terminal_give_up' }, confidence: '0.8' }).valid === false);
+  ok('validate: out-of-range confidence clamped not rejected', m.validateRepairOutput(out({ kind: 'terminal_give_up' }, { confidence: 9 })).repair.confidence === 1);
+  ok('validate: rootCause coerced to ambiguous', m.validateRepairOutput(out({ kind: 'terminal_give_up' }, { rootCause: 'made_up' })).repair.rootCause === 'ambiguous');
 
   ok('apply: precondition is stateful (fresh)', m.applyRepair({ root: '.t' }, 'hover', { kind: 'precondition_action', actions: ['click .o'] }).fresh === true);
   ok('apply: scroll_into_view is stateful (fresh)', m.applyRepair({ root: '.t' }, 'hover', { kind: 'scroll_into_view', selector: '.t' }).fresh === true);
   ok('apply: retarget_selector NOT stateful', m.applyRepair({ root: '.t' }, 'hover', { kind: 'retarget_selector', selector: '.p' }).fresh === undefined);
   ok('apply: retarget rewrites root', m.applyRepair({ root: '.t' }, 'hover', { kind: 'retarget_selector', selector: '.p' }).root === '.p');
+  ok('apply: no dead repairNth field', m.applyRepair({ root: '.t' }, 'hover', { kind: 'retarget_selector', selector: '.p', nth: 3 }).repairNth === undefined);
   ok('isStateful: precondition true', m.isStatefulRepairKind('precondition_action') === true);
   ok('isStateful: use_other_instance false', m.isStatefulRepairKind('use_other_instance') === false);
+}
 
-  ok('meetsSuccess: ok meets moved', m.meetsSuccess({ status: 'ok' }, { expect: 'moved' }) === true);
-  ok('meetsSuccess: empty fails moved', m.meetsSuccess({ status: 'empty' }, { expect: 'moved' }) === false);
-  ok('meetsSuccess: onSelector enforced', m.meetsSuccess({ status: 'ok', movedSelectors: ['.a'] }, { expect: 'moved', onSelector: '.b' }) === false);
-  ok('meetsSuccess: onSelector matched', m.meetsSuccess({ status: 'ok', movedSelectors: ['.b.x'] }, { expect: 'moved', onSelector: '.b.x' }) === true);
-  // Class-token match: engine finding selector carries extra classes, criterion
-  // names the specific one (the enerblock prev-arrow case from the headed e2e).
-  ok('meetsSuccess: class-token match across CSS-path shapes',
-    m.meetsSuccess({ status: 'ok', movedSelectors: ['div.carousel__arrow.carousel__arrow--prev'] }, { expect: 'moved', onSelector: 'div.carousel__arrow--prev' }) === true);
+// ── MF1: meetsSuccess parsed-selector matching edge cases ────────────────────
+{
+  const moved = (sels, onSelector, expect = 'moved') => m.meetsSuccess({ status: 'ok', movedSelectors: sels }, { expect, onSelector });
+  ok('meetsSuccess: ok meets moved (no onSelector)', m.meetsSuccess({ status: 'ok' }, { expect: 'moved' }) === true);
+  ok('meetsSuccess: empty fails', m.meetsSuccess({ status: 'empty' }, { expect: 'moved' }) === false);
+  // .nav must NOT match .navigation (the old substring bug).
+  ok('meetsSuccess: .nav does NOT match .navigation', moved(['.navigation'], '.nav') === false);
+  ok('meetsSuccess: .nav matches .nav', moved(['div.nav'], '.nav') === true);
+  // Filtered/extra state classes on the moved selector are allowed.
+  ok('meetsSuccess: extra state classes allowed', moved(['button.btn.is-active.swiper-button-disabled'], 'button.btn') === true);
+  // Criterion class the moved selector lacks -> no match.
+  ok('meetsSuccess: missing criterion class -> no match', moved(['button.btn'], 'button.btn.is-active') === false);
+  // id and tag discrimination.
+  ok('meetsSuccess: id mismatch -> no match', moved(['#other.box'], '#wanted.box') === false);
+  ok('meetsSuccess: tag mismatch -> no match', moved(['span.x'], 'div.x') === false);
+  // The enerblock prev-arrow shape (engine reports extra classes).
+  ok('meetsSuccess: class-token across CSS-path shapes', moved(['div.carousel__arrow.carousel__arrow--prev'], 'div.carousel__arrow--prev') === true);
+  // Degenerate onSelector values can never be satisfied.
+  ok('meetsSuccess: degenerate "." -> no match', moved(['div.x'], '.') === false);
+  ok('meetsSuccess: degenerate ">" -> no match', moved(['div.x'], '>') === false);
+  ok('meetsSuccess: empty onSelector -> no match', moved(['div.x'], '') === false);
+  ok('meetsSuccess: whitespace onSelector -> no match', moved(['div.x'], '   ') === false);
+  // MF1: onSelector is enforced EVEN when expect is status_ok_or_check.
+  ok('meetsSuccess: status_ok_or_check still enforces onSelector', moved(['.a'], '.b', 'status_ok_or_check') === false);
+  ok('meetsSuccess: status_ok_or_check + matching onSelector', moved(['.b'], '.b', 'status_ok_or_check') === true);
+  ok('meetsSuccess: status_ok_or_check + no onSelector -> ok', m.meetsSuccess({ status: 'check' }, { expect: 'status_ok_or_check' }) === true);
+  // parseSimpleSelector / selectorSatisfies directly.
+  ok('parse: rightmost compound', JSON.stringify(m.parseSimpleSelector('div.wrap > a.link.btn')) === JSON.stringify({ tag: 'a', id: null, classes: ['link', 'btn'] }));
+  ok('selectorSatisfies: subset classes', m.selectorSatisfies('a.link.btn', 'a.link') === true);
+  ok('selectorSatisfies: degenerate criterion false', m.selectorSatisfies('a.link', '>') === false);
+}
+
+// ── MF3: a successful repair retains its ORIGINAL failure bucket ─────────────
+{
+  const env = makeEnv({
+    repairContext: { animatableHere: { childAnimated: true }, candidateTriggers: [{ selector: '.next' }], matches: [{ occludedBy: '.o' }] },
+    recapture: (cloned, type, id) => ({ id, type, status: 'ok', findings: 1, movedSelectors: ['.target'], page: { strategy: 'fresh', opened: true, isolated: true } }),
+  }).env;
+  const out = m.runRepairLoop(env, {
+    capture: { root: '.target' }, type: 'hover', id: 'bucket', url: 'u', viewport: [1, 1], map: {},
+    result: { id: 'bucket', type: 'hover', status: 'error', cause: 'occlusion' },
+    config: CONFIG, budget: mkBudget(24), failSelector: '.target',
+  });
+  ok('MF3: repair block records original failureCause', out.repair.failureCause === 'occlusion');
+  ok('MF3: successful repair result has null/absent cause but bucket preserved', out.repair.outcome === 'ok-after-repair' && out.repair.failureCause === 'occlusion');
+  // MF5: the loop keeps the recapture's OWN page provenance, not the failure's.
+  ok('MF5: recapture page provenance preserved (isolated fresh)', out.result.page && out.result.page.isolated === true && out.result.page.opened === true);
+}
+
+// ── calib-metrics buckets repair att/ok from failureCause (MF3) ──────────────
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repair-metrics-'));
+  fs.writeFileSync(path.join(dir, 'capture-results.json'), JSON.stringify({
+    capturedAt: '2026-06-15T00:00:00.000Z', count: 2, results: [
+      { id: 'win', type: 'hover', status: 'ok', origin: 'after-repair', findings: 2,
+        repair: { attempted: true, failureCause: 'occlusion', attempts: [{ action: 'precondition_action' }], winningAction: 'precondition_action', outcome: 'ok-after-repair', terminalCause: null } },
+      { id: 'stop', type: 'hover', status: 'empty', origin: 'first-try', cause: 'inert_representative', findings: 0,
+        repair: { attempted: true, failureCause: 'inert_representative', attempts: [{ action: 'terminal_give_up' }], winningAction: null, outcome: 'terminal', terminalCause: 'genuinely_inert' } },
+    ],
+  }));
+  const r = require('child_process').spawnSync('node', [path.join(__dirname, '..', 'bin', 'calib-metrics'), dir, '--site', 'm'], { encoding: 'utf8' });
+  const metrics = JSON.parse(fs.readFileSync(path.join(dir, 'metrics.json'), 'utf8'));
+  ok('metrics: win bucketed under occlusion (not "other")', metrics.repair.by_bucket.occlusion && metrics.repair.by_bucket.occlusion.ok === 1);
+  ok('metrics: no spurious "other" bucket', !metrics.repair.by_bucket.other);
+  ok('metrics: ok_after_repair split', metrics.captures.ok_after_repair === 1 && metrics.captures.ok_first_try === 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ── SF8: terminal + low-confidence attempts DO consume budget ────────────────
+{
+  const budget = mkBudget(24);
+  const env = makeEnv({
+    repairContext: { animatableHere: {}, candidateTriggers: [], matches: [{ occludedBy: null }] },
+    recapture: () => { throw new Error('no recapture for terminal'); },
+  }).env;
+  m.runRepairLoop(env, {
+    capture: { root: '.t' }, type: 'hover', id: 'term-budget', url: 'u', viewport: [1, 1], map: {},
+    result: { status: 'empty', cause: 'occlusion' }, config: CONFIG, budget, failSelector: '.t',
+  });
+  ok('SF8: a terminal attempt spends one budget unit', budget.remaining() === 23);
 }
 
 // ── external-command transport proof (no browser, no model) ──────────────────
@@ -239,6 +335,18 @@ function ok(name, cond) {
   const parsed = m.invokeRepairProvider(STUB_CMD, inputFile, null);
   ok('transport: provider output parsed from printed path', parsed && parsed.action && parsed.action.kind === 'terminal_give_up');
   ok('transport: bad command -> null (fail safe)', m.invokeRepairProvider('node /no/such/stub.js', inputFile, null) === null);
+
+  // SF7: a provider that prints diagnostics AFTER the path still resolves.
+  const noisyStub = path.join(runDir, 'noisy-stub.js');
+  fs.writeFileSync(noisyStub, [
+    'const fs = require("fs");',
+    'const input = process.argv[2];',
+    'const outPath = input.replace(/input\\.json$/, "output.json");',
+    'fs.writeFileSync(outPath, JSON.stringify({ diagnosis: "ok", rootCause: "occlusion", confidence: 0.7, action: { kind: "retarget_selector", selector: ".p" }, successCriterion: { expect: "moved" } }));',
+    'process.stdout.write("starting provider...\\n" + outPath + "\\ndone (cleanup ok)\\n");',
+  ].join('\n'));
+  const noisy = m.invokeRepairProvider(`node ${noisyStub}`, inputFile, null);
+  ok('SF7: output path found despite trailing diagnostics', noisy && noisy.action && noisy.action.kind === 'retarget_selector');
 }
 
 fs.rmSync(runDir, { recursive: true, force: true });
