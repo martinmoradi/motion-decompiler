@@ -1735,7 +1735,13 @@ function runCapture(runDir, manifest, manifestFile, flags = {}) {
   // ── Capture-repair loop wiring (design §1, §5). Inert when no provider is
   // configured: repairCfg === null means the loop never runs and soft-fail
   // behavior is byte-identical. ──
-  const repairCfg = repairConfig(manifest, flags);
+  // --repair-dump is dump-only: it writes the §2 diagnosis input + screenshot
+  // for each repairable soft-fail and STOPS (help promises no provider, no
+  // re-measure). So it MUST suppress the in-tool loop even when a provider is
+  // configured via --repair-cmd or manifest.repair.command. The dump path
+  // (maybeDumpRepairInput) keys off flags.repairDump, not repairCfg, so nulling
+  // repairCfg here leaves the dump + screenshots intact while disarming the loop.
+  const repairCfg = flags.repairDump ? null : repairConfig(manifest, flags);
   // Upper bound on captures that COULD fail repairably (causes aren't known
   // until each runs); the absolute ceiling is the real protection.
   const repairCandidateCount = captures.filter(c => !(c.skip || c.enabled === false)).length;
