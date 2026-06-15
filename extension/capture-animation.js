@@ -60,6 +60,11 @@
   const GSAP_EVIDENCE_PAD_MS = 250;
   const LAYOUT_SPIKE_RATIO = 20;
   const LAYOUT_SPIKE_MIN_PX = 5000;
+  // Below this decomposed-scale magnitude an axis counts as collapsed (e.g.
+  // scaleX(0) underline reveals): its matrix column is rank-deficient, so any
+  // rotation read off it is amplified float noise, not a real angle. Kept
+  // conservative so a genuine small-scale-with-real-rotation still decodes.
+  const COLLAPSED_AXIS_EPS = 1e-3;
 
   const r1 = n => Math.round(n * 10) / 10;
   const r2 = n => Math.round(n * 100) / 100;
@@ -339,15 +344,23 @@
     const v = m[2].split(',').map(parseFloat);
     if (!m[1]) {
       const [a, b, c, d, e, f] = v;
+      const sx = Math.hypot(a, b), sy = Math.hypot(c, d);
+      // A collapsed axis makes the (a,b) column rank-deficient: atan2 then turns
+      // browser float residuals into a bogus angle (~90deg on a scaleX(0) rest
+      // matrix). The rotation is unrecoverable, so report 0 instead of noise.
+      const collapsed = sx < COLLAPSED_AXIS_EPS || sy < COLLAPSED_AXIS_EPS;
       return {
-        scaleX: r3(Math.hypot(a, b)), scaleY: r3(Math.hypot(c, d)),
-        rotate: r1(Math.atan2(b, a) * 180 / Math.PI),
+        scaleX: r3(sx), scaleY: r3(sy),
+        rotate: collapsed ? 0 : r1(Math.atan2(b, a) * 180 / Math.PI),
         x: r2(e), y: r2(f),
       };
     }
-    const sx = Math.hypot(v[0], v[1], v[2]) || 1;
-    const sy = Math.hypot(v[4], v[5], v[6]) || 1;
-    const sz = Math.hypot(v[8], v[9], v[10]) || 1;
+    const sxRaw = Math.hypot(v[0], v[1], v[2]);
+    const syRaw = Math.hypot(v[4], v[5], v[6]);
+    const szRaw = Math.hypot(v[8], v[9], v[10]);
+    const sx = sxRaw || 1;
+    const sy = syRaw || 1;
+    const sz = szRaw || 1;
     const R = [
       [v[0] / sx, v[4] / sy, v[8] / sz],
       [v[1] / sx, v[5] / sy, v[9] / sz],
@@ -358,9 +371,17 @@
     if (Math.abs(R[2][0]) < 0.9999) { rx = Math.atan2(R[2][1], R[2][2]); rz = Math.atan2(R[1][0], R[0][0]); }
     else { rx = Math.atan2(-R[1][2], R[1][1]); rz = 0; }
     const deg = rad => r1(rad * 180 / Math.PI);
+    // Same degeneracy in 3D: the `|| 1` fallback on a near-zero axis scale leaves
+    // a rank-deficient (noise) column in R. Suppress only the Euler components
+    // read off a collapsed axis: rotateY/rotateZ come from the X column (sx),
+    // rotateX from the Y/Z columns (sy/sz).
+    const xCollapsed = sxRaw < COLLAPSED_AXIS_EPS;
+    const yzCollapsed = syRaw < COLLAPSED_AXIS_EPS || szRaw < COLLAPSED_AXIS_EPS;
     return {
       scaleX: r3(sx), scaleY: r3(sy), scaleZ: r3(sz),
-      rotateX: deg(rx), rotateY: deg(ry), rotateZ: deg(rz),
+      rotateX: yzCollapsed ? 0 : deg(rx),
+      rotateY: xCollapsed ? 0 : deg(ry),
+      rotateZ: xCollapsed ? 0 : deg(rz),
       x: r2(v[12]), y: r2(v[13]), z: r2(v[14]), _approx3d: true,
     };
   }
@@ -1492,6 +1513,7 @@
   watchGlobal('gsap', installGsapProbe);
   watchGlobal('CustomEase', installCustomEaseProbe);
 
+  api._decodeTransform = decodeTransform;   // pure helper, surfaced for unit tests
   window.__cap = api;
   window.__capPicker = picker;
   if (window.__capAutoBoot) {
