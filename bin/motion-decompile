@@ -1360,6 +1360,35 @@ function findingTiming(finding, prop) {
   return prop?.timing || finding?.timing || {};
 }
 
+function findingHasProperty(finding, prop) {
+  return Boolean(finding?.properties && finding.properties[prop]);
+}
+
+function revealLikeTrigger(trigger) {
+  return /^(boot|load|scroll|scroll-reveal)$/i.test(String(trigger || ''));
+}
+
+function preferredRevealFinding(findings) {
+  return findings.find(finding => findingHasProperty(finding, 'transform'))
+    || findings.find(finding => findingHasProperty(finding, 'opacity'))
+    || null;
+}
+
+function boxOnlyTextReflowFindings(findings) {
+  return findings.filter(finding => {
+    const props = Object.keys(finding?.properties || {}).filter(key => finding.properties[key]);
+    if (!props.length || !props.every(prop => prop === 'width' || prop === 'height')) return false;
+    const haystack = [
+      finding.selector,
+      finding.locator?.shortSelector,
+      finding.locator?.uniqueSelector,
+      finding.locator?.text,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return Boolean(finding.locator?.text)
+      || /\b(p|h[1-6])\b|word|char|line|split|heading|title|headline|text/.test(haystack);
+  });
+}
+
 function cubicBezier(value) {
   const text = String(value || '');
   return /^cubic-bezier\(/.test(text) ? text : null;
@@ -1380,6 +1409,10 @@ function chooseLeadFinding(timeline, trigger) {
   if (trigger === 'click' || trigger === 'manual') {
     const height = findings.find(finding => finding.properties && finding.properties.height);
     if (height) return height;
+  }
+  if (revealLikeTrigger(trigger)) {
+    const reveal = preferredRevealFinding(findings);
+    if (reveal) return reveal;
   }
   return findings.find(finding => {
     const prop = findingProperty(finding);
@@ -1456,6 +1489,76 @@ function genericSelector(selector) {
   return /^(a|button|div|span|svg|img|li|ul|p|section|article|nav|header|footer)$/i.test(String(selector || '').trim());
 }
 
+function stackHasScrollTrigger(map) {
+  return Array.isArray(map?.libs)
+    && map.libs.some(item => /scrolltrigger/i.test(String(item)));
+}
+
+function selectorTag(selector) {
+  const match = String(selector || '').trim().match(/^([a-z][a-z0-9-]*)\b/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function selectorClassTokens(selector) {
+  const tokens = [];
+  const re = /\.((?:\\.|[A-Za-z0-9_-])+)/g;
+  let match;
+  while ((match = re.exec(String(selector || '')))) {
+    tokens.push(match[1].replace(/\\/g, ''));
+  }
+  return tokens;
+}
+
+function accordionBaseClass(token) {
+  const cls = String(token || '');
+  if (!/accordion|faq/i.test(cls)) return null;
+  const suffix = '(?:top|header|head|heading|title|question|trigger|toggle|button|btn|label|icon|svg|content|bottom|panel|body|answer|text|wrap|inner)';
+  const match = cls.match(new RegExp(`^(.+?(?:item|row|entry|faq|accordion))[-_]+${suffix}(?:[-_].*)?$`, 'i'));
+  if (match && match[1]) return match[1];
+  if (/(?:^|[-_])(item|row|entry)(?:$|[-_])|accordion|faq/i.test(cls)) return cls;
+  return null;
+}
+
+function accordionRootFromSelector(selector) {
+  for (const token of selectorClassTokens(selector)) {
+    const base = accordionBaseClass(token);
+    if (!base) continue;
+    const tag = selectorTag(selector);
+    if (token === base) {
+      const rootTag = ['li', 'details', 'section', 'article', 'div'].includes(tag) ? tag : 'div';
+      return `${rootTag}.${base}`;
+    }
+    const suffix = token.slice(base.length).match(/^[-_]+/)?.[0] || '-';
+    return [`li.${base}`, `div.${base}`, `div.${base}${suffix}top`].join(', ');
+  }
+  return null;
+}
+
+function accordionRootBase(root) {
+  for (const token of selectorClassTokens(root)) {
+    const base = accordionBaseClass(token);
+    if (base) return base;
+  }
+  return null;
+}
+
+function inferredAccordionToggleSelectors(selector, rootBase) {
+  const out = [];
+  const tag = selectorTag(selector);
+  const clickTag = ['button', 'a'].includes(tag) ? tag : 'div';
+  for (const token of selectorClassTokens(selector)) {
+    const match = token.match(/^(.+?(?:item|row|entry|faq|accordion))([-_]+)(?:bottom|content|panel|body|answer)(?:[-_].*)?$/i);
+    if (!match) continue;
+    const base = match[1];
+    if (rootBase && base !== rootBase) continue;
+    const sep = match[2] || '-';
+    for (const suffix of ['top', 'header', 'head', 'trigger', 'toggle', 'question', 'title']) {
+      out.push(`${clickTag}.${base}${sep}${suffix}`);
+    }
+  }
+  return out;
+}
+
 function cssHoverCoveredByParent(hover, map) {
   const selector = String(hover?.sel || '');
   const candidates = map.hoverCandidates || [];
@@ -1481,12 +1584,33 @@ function inferAccordionRoot(map) {
   ].filter(Boolean);
   const matches = selectors.filter(selector => /accordion|faq/i.test(selector) && !generatedSelector(selector) && !genericSelector(selector));
   if (!matches.length) return null;
+
+  const roots = new Map();
+  for (const selector of matches) {
+    const root = accordionRootFromSelector(selector);
+    if (!root || generatedSelector(root) || genericSelector(root)) continue;
+    const item = roots.get(root) || { selector: root, count: 0 };
+    item.count++;
+    roots.set(root, item);
+  }
+  if (roots.size) {
+    return [...roots.values()].map(item => {
+      const s = item.selector.toLowerCase();
+      let score = hoverSelectorScore(item.selector);
+      score -= Math.min(30, item.count * 8);
+      if (/item|row|entry|question|faq/.test(s)) score -= 35;
+      if (/button|btn|trigger|toggle|top|header|heading|title|label|icon|svg|text|content|bottom|panel|body|answer/.test(s)) score += 30;
+      return { selector: item.selector, score };
+    }).sort((a, b) => a.score - b.score)[0].selector;
+  }
+
   const scored = matches.map(selector => {
     const s = selector.toLowerCase();
     let score = hoverSelectorScore(selector);
     if (/item|row|entry|question|faq/.test(s)) score -= 25;
-    if (/button|btn|trigger|toggle|top|header|heading|title|label|icon|svg|text|content|bottom|panel|body|answer/.test(s)) score += 18;
-    if (/^button[.#]|^a[.#]|\[role="button"\]/.test(s)) score += 12;
+    if (/content|bottom|panel|body|answer/.test(s)) score += 55;
+    if (/button|btn|trigger|toggle|top|header|heading|title|label|icon|svg|text/.test(s)) score += 25;
+    if (/^button[.#]|^a[.#]|\[role="button"\]/.test(s)) score += 18;
     if (/^section[.#]|^div[.#]/.test(s)) score -= 5;
     return { selector, score };
   }).sort((a, b) => a.score - b.score);
@@ -1494,19 +1618,36 @@ function inferAccordionRoot(map) {
 }
 
 function inferAccordionAction(map, root) {
-  const candidates = [
+  const rawCandidates = [
     ...(map.hoverCandidates || []),
     ...(map.cssHovers || []).map(item => item.sel),
   ].filter(Boolean)
     .filter(selector => /accordion|faq/i.test(selector) && !generatedSelector(selector) && !genericSelector(selector));
-  const scored = candidates.map(selector => {
-    const s = selector.toLowerCase();
-    let score = hoverSelectorScore(selector);
-    if (/button|btn|trigger|toggle|top|header|heading|title|question/.test(s)) score -= 35;
-    if (/icon|svg|text|content|bottom|panel|body|answer/.test(s)) score += 20;
-    if (/^button[.#]|\[role="button"\]/.test(s)) score -= 12;
-    if (selector === root) score += 8;
-    return { selector, score };
+  const rootBase = accordionRootBase(root);
+  const candidates = [];
+  const seen = new Set();
+  const add = (selector, generated = false) => {
+    if (!selector || seen.has(selector)) return;
+    seen.add(selector);
+    candidates.push({ selector, generated });
+  };
+  for (const selector of rawCandidates) {
+    add(selector, false);
+    for (const inferred of inferredAccordionToggleSelectors(selector, rootBase)) add(inferred, true);
+  }
+  const scored = candidates.map(item => {
+    const s = item.selector.toLowerCase();
+    let score = hoverSelectorScore(item.selector);
+    if (/button|btn/.test(s)) score -= 75;
+    if (/trigger|toggle/.test(s)) score -= item.generated ? 55 : 75;
+    if (/top|header|head|heading|title|question/.test(s)) score -= item.generated ? 85 : 65;
+    if (/icon|svg/.test(s)) score -= 35;
+    if (/label|text/.test(s)) score -= 10;
+    if (/content|bottom|panel|body|answer/.test(s)) score += 90;
+    if (/^button[.#]|^a[.#]|\[role="button"\]/.test(s)) score -= 18;
+    if (item.selector === root) score += 20;
+    if (item.generated) score -= 5;
+    return { selector: item.selector, score };
   }).sort((a, b) => a.score - b.score);
   return `click ${(scored[0] && scored[0].selector) || root}`;
 }
@@ -1525,6 +1666,20 @@ function splitBootSelectors(map) {
     '[class*="words-split"]',
     '[class*="chars-split"]',
   ];
+}
+
+function splitRevealScrollCapture(reveal, index) {
+  const root = reveal.host || reveal.section;
+  return {
+    id: slugify(`split-reveal-${index}-${root}`),
+    type: 'scroll-reveal',
+    label: `${selectorLabel(root)} split reveal`,
+    root,
+    action: `scrollintoview ${root}`,
+    group: 'main-page-after-intro',
+    waitMs: 1800,
+    reason: 'Split reveal host detected on a ScrollTrigger page; use timed scroll capture: settle, arm, scroll into view, wait, dump.',
+  };
 }
 
 function scrollTriggerCapture(st) {
@@ -1583,8 +1738,13 @@ function planFromMap(runDir, flags = {}) {
     });
   }
 
+  const splitReveals = Array.isArray(map.splitReveals) ? map.splitReveals.filter(reveal => reveal.host) : [];
   const splitSelectors = splitBootSelectors(map);
-  if (splitSelectors.length) {
+  if (splitReveals.length && stackHasScrollTrigger(map)) {
+    splitReveals.slice(0, 12).forEach((reveal, index) => {
+      addPlannedCapture(state, splitRevealScrollCapture(reveal, index));
+    });
+  } else if (splitSelectors.length) {
     addPlannedCapture(state, {
       id: 'boot-load-reveals',
       type: 'boot',
@@ -1614,12 +1774,14 @@ function planFromMap(runDir, flags = {}) {
 
   const accordionRoot = inferAccordionRoot(map);
   if (accordionRoot) {
+    const action = inferAccordionAction(map, accordionRoot);
     addPlannedCapture(state, {
       id: 'accordion-click',
       type: 'click',
       label: 'Accordion open/close',
       root: accordionRoot,
-      action: inferAccordionAction(map, accordionRoot),
+      action,
+      scrollTarget: selectorFromAction(action) || accordionRoot,
       fresh: true,
       waitMs: 900,
       reason: 'Accordion or FAQ selectors were present in the map. Stateful click is isolated by default; add resetAction + reusePage:true if batching is safe.',
@@ -1824,6 +1986,14 @@ function timelineAnimation(runDir, result, capture) {
   const confidence = capture?.confidence || confidenceFor(leadFinding, timing, timeline);
   const duration = capture?.duration || timing.duration || (timeline.meta?.durationMs ? `${Math.round(timeline.meta.durationMs)}ms measured` : 'unknown');
   const ease = capture?.ease || timing.easing || 'unknown';
+  const reflowNoise = revealLikeTrigger(trigger) ? boxOnlyTextReflowFindings(timeline.findings || []) : [];
+  let notes = capture?.notes || timeline.summary || '';
+  if (reflowNoise.length) {
+    const message = preferredRevealFinding(timeline.findings || [])
+      ? `Ignored ${reflowNoise.length} text-fragment width/height reflow finding(s) while choosing the transform/opacity reveal lead.`
+      : `Only text-fragment width/height reflow was captured; verify this as layout noise before treating it as authored motion.`;
+    notes = notes ? `${notes} ${message}` : message;
+  }
   return {
     id,
     label: capture?.label || labelFromId(id),
@@ -1843,7 +2013,7 @@ function timelineAnimation(runDir, result, capture) {
     },
     confidence,
     timelineRef: ref,
-    notes: capture?.notes || timeline.summary || '',
+    notes,
   };
 }
 
@@ -2013,12 +2183,15 @@ function cssHoverAnimations(map, patterns) {
 
 function splitRevealAnimations(map, patterns) {
   const reveals = Array.isArray(map?.splitReveals) ? map.splitReveals : [];
+  const trigger = stackHasScrollTrigger(map) ? 'scroll' : 'load';
   if (reveals.length) {
     uniquePush(patterns, {
       id: 'p-split-reveal',
-      trigger: 'load',
+      trigger,
       appliesTo: `${reveals.length} mapped split reveal host(s)`,
-      summary: 'SplitText or line-mask reveal host detected structurally.',
+      summary: stackHasScrollTrigger(map)
+        ? 'SplitText or line-mask reveal host detected on a ScrollTrigger page; capture by scrolling the host into view.'
+        : 'SplitText or line-mask reveal host detected structurally.',
       confidence: 'unknown - verify',
     });
   }
@@ -2026,7 +2199,7 @@ function splitRevealAnimations(map, patterns) {
     id: slugify(`split-reveal-${index}-${reveal.host}`),
     label: `${selectorLabel(reveal.host)} split reveal`,
     selector: reveal.host,
-    trigger: 'load',
+    trigger,
     mechanism: 'splittext line-mask reveal',
     patternId: 'p-split-reveal',
     layers: reveal.count || 0,

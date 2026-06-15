@@ -818,6 +818,12 @@
   /* ---- whole-animation plain-English summary ---------------------------- */
   // The spec is the product; an LLM writes the recreation from it. This sentence
   // describes the ENTIRE captured animation (all layers), not just the first.
+  function preferredRevealSummaryFinding(findings) {
+    return findings.find(f => f.properties && f.properties.transform)
+      || findings.find(f => f.properties && f.properties.opacity)
+      || findings[0];
+  }
+
   function summarize(findings, stagger) {
     if (!findings.length) return 'no animation captured';
     if (findings.length === 1 && findings[0].type === 'css-sprite') {
@@ -825,7 +831,7 @@
       return `CSS sprite-sheet: ${f.framePositions.length} frames at ~${f.fps}fps, looping (${f.animation.duration} ${f.animation.timing}).`;
     }
     if (stagger) {
-      const f = findings[0], t = f.timing || {};
+      const f = preferredRevealSummaryFinding(findings), t = f.timing || {};
       return `Staggered ${stagger.items}-item animation (e.g. split text): each item ${f.technique}, ~${stagger.staggerMs}ms apart, ${t.duration || '?'} ${t.easing || ''}.`.trim();
     }
     const t = findings[0].timing || {};
