@@ -271,9 +271,11 @@ THE STANDING SITE SET (do not change without telling the PM):
   - ashleybrookecs   https://ashleybrookecs.com/
   - enerblock        https://enerblock.net/en/
   - flowfest         https://www.flowfest.co.uk/
-  - vwlab            https://vwlab.io/pages/report   (kept on purpose: this is
-        the cross-origin-iframe regression case; expected to flip from
-        wrong-document to flagged-iframe once the iframe fix lands)
+  - vwlab            https://vwlab.io/pages/report   (was the cross-origin-iframe
+        regression case; it has since DRIFTED off the embed shell, so it no
+        longer reproduces that. The cross-origin guarantee now lives in a
+        permanent two-port smoke fixture, not this URL. vwlab is pending a
+        keep-or-swap decision; report what it actually is now and recommend.)
 
 PER-SITE PROCEDURE (identical for all 4, real headed browser per CLAUDE.md, use
 the repo wrapper bin/capture-browser, a unique AGENT_BROWSER_SESSION per site):
