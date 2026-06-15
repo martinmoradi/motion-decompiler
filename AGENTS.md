@@ -18,7 +18,7 @@ agent then writes the recreation from that spec.
 - `bin/capture-snippet.sh` + `install.sh` — the DevTools-snippet fallback path
   (clipboard the engine into Sources > Snippets) for when the extension can't be
   loaded.
-- `skill/` — the Claude skill that drives the full map→capture pipeline.
+- `skill/` — the Codex skill that drives the full map→capture pipeline.
 
 ## The engine API (`window.__cap`)
 
@@ -65,8 +65,8 @@ depend on clipboard timing.
 
 The pipeline is defined against ~6 browser primitives (`open`, `evalJS`,
 `realHover`, `realScroll`, `realClick`, `wait`) so it's driver-agnostic. Each
-environment supplies a thin adapter: Claude Code = agent-browser (map) +
-claude-in-chrome MCP (capture); Codex = agent-browser + its in-app Chrome;
+environment supplies a thin adapter: Codex = agent-browser (map) +
+Codex-in-chrome MCP (capture); Codex = agent-browser + its in-app Chrome;
 minimal = one real browser (agent-browser `--auto-connect`/`--headed`, or
 CDP/Playwright headed) for both. The recipe and manifest schema are identical
 across drivers — only the adapter changes. Adapters live in

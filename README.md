@@ -8,9 +8,9 @@ animations, so it shows nothing for GSAP- or canvas-driven motion; this sees
 everything because it reads the rendered result.
 
 The output is a **spec, not code**: detected libraries, a one-line plain-English
-`summary` of the whole animation, and a `findings` array — each animating layer
+`summary` of the whole animation, and a `findings` array - each animating layer
 with its measured timing/easing and a frame-by-frame timeline. Capturing is the
-tool's job; **writing the recreation is the LLM's job** — hand the spec to a
+tool's job; **writing the recreation is the LLM's job** - hand the spec to a
 coding agent (paste it, or use it from the console) and it builds a faithful
 version in your stack. `dump()` returns the spec and copies the pure JSON to the
 clipboard.
@@ -20,14 +20,28 @@ cheaply (structure, stack, selectors), then **capture** the motion of the pieces
 that matter and recreate them. The capture must run in a real, rendered browser
 (headless synthetic events don't fire most hover/scroll handlers).
 
+For trusted local `agent-browser` runs on Martin's machine, disable interactive
+confirmations before opening the headed capture browser:
+
+```bash
+export AGENT_BROWSER_CONFIRM_ACTIONS=
+export AGENT_BROWSER_CONFIRM_INTERACTIVE=false
+```
+
+Agents should save JSON with `agent-browser eval 'JSON.stringify(...)'` rather
+than depending on clipboard reads.
+
 ## Two ways to load it
 
 ### 1. Unpacked extension (primary)
 
-`extension/` is an MV3 extension whose content script runs in the page's MAIN
-world and defines `window.__cap` on **every page automatically** — no pasting,
-ever. Edit `extension/capture-animation.js` and the change is live on the next
-extension reload.
+`extension/` is an MV3 extension whose content script runs early in the page's
+MAIN world and defines `window.__cap` on **every page automatically** - no
+pasting, ever. It also opportunistically instruments the page's own GSAP and
+CustomEase globals when they exist, so captures can include source evidence such
+as tween targets, duration, ease, stagger, and CustomEase path data. Edit
+`extension/capture-animation.js` and the change is live on the next extension
+reload.
 
 Load it once:
 
@@ -78,11 +92,27 @@ __cap.on('.selector')                // capture one element on hover (default)
 __cap.on('.sel', {trigger:'scroll'}) // capture on scroll-into-view
 __cap.scan('.section')               // diff-scan: find what moves in a region
 __cap.scan($0)                       // capture the element selected in Elements
+__cap.gsap()                         // inspect logged GSAP/CustomEase evidence
 __cap.dump()                         // finalize -> returns + copies the spec JSON
 ```
 
 Triggers: `hover` (default) · `scroll` · `load` · `manual`. Tip: `$0` is the
 element currently selected in the Elements panel — handy for `on`/`scan`.
+
+For load-time reveals, use the boot recorder. It watches likely elements for a
+fixed early window and can be auto-started from an init script:
+
+```js
+__cap.boot({ selectors: ['h1', '[class*=split]', '[class*=hero]'], ms: 4000 })
+__cap.bootDump()
+```
+
+When using `agent-browser --init-script`, a tiny config init script can set
+`window.__capAutoBoot` before loading the engine:
+
+```js
+window.__capAutoBoot = { selectors: ['h1', '[class*=split]'], ms: 4000 }
+```
 
 ### When to use `on` vs `scan`
 
@@ -111,8 +141,10 @@ element currently selected in the Elements panel — handy for `on`/`scan`.
   `scan` on a specific container element.
 - 3D-matrix rotation decomposition is approximate (flagged `_approx3d`). The raw
   matrices and translate/scale are exact; treat Euler angles as close-but-verify.
-- GSAP/canvas easing can't be read back (no CSS to inspect); it's marked
-  `unknown — verify`. CSS-transition easing *is* read authoritatively.
+- GSAP easing is not visible in computed style, but the engine now logs GSAP
+  calls made after it is injected. When that evidence is present, prefer the
+  logged `duration`, `ease`, `stagger`, and target data over curve guessing.
+  CSS-transition easing is still read authoritatively from computed style.
 
 ## Files
 
