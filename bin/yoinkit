@@ -3378,35 +3378,164 @@ function pageStrategyLabel(page) {
   return bits.join(' / ');
 }
 
+function repairBucket(result) {
+  const repair = result && result.repair;
+  const outcome = repair && repair.outcome;
+  if ((result && result.origin === 'after-repair') || outcome === 'ok-after-repair') return 'after-repair';
+  if (outcome === 'terminal') return 'honest-terminal';
+  if (repair && repair.attempted === true && (outcome === 'unrepaired' || !outcome)) return 'still-unrepaired';
+  if ((!repair || repair.attempted !== true) && result && result.status !== 'skipped') return 'first-try';
+  return null;
+}
+
+function lastRepairAttempt(result) {
+  const attempts = result && result.repair && Array.isArray(result.repair.attempts)
+    ? result.repair.attempts
+    : [];
+  return attempts.length ? attempts[attempts.length - 1] : null;
+}
+
+function compactReportText(value, max = 180) {
+  const text = reportText(value).replace(/\s+/g, ' ').trim();
+  if (!text || text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3)).trim()}...`;
+}
+
+function repairDiagnosis(result) {
+  if (result && result.terminalDiagnosis) return compactReportText(result.terminalDiagnosis);
+  if (result && result.lowConfidenceDiagnosis) return compactReportText(result.lowConfidenceDiagnosis);
+  const last = lastRepairAttempt(result);
+  return compactReportText(
+    (last && last.params && (last.params.rationale || last.params.error)) || ''
+  );
+}
+
+function repairFailureCause(result) {
+  return (result && result.repair && result.repair.failureCause) || (result && result.cause) || 'unknown';
+}
+
+function movedLabel(moved) {
+  return moved === '' || moved == null ? 'unknown' : moved;
+}
+
+function timelineLabel(result) {
+  return result && result.timelineRef ? `\`${result.timelineRef}\`` : '(none)';
+}
+
+function statusCauseLabel(status, cause) {
+  return cause ? `${status} [cause: ${cause}]` : status;
+}
+
+function repairAttemptActions(result) {
+  const attempts = result && result.repair && Array.isArray(result.repair.attempts)
+    ? result.repair.attempts
+    : [];
+  const actions = attempts.map(attempt => attempt && attempt.action).filter(Boolean);
+  return actions.length ? actions.join(', ') : '(none)';
+}
+
+function repairLastEngineLabel(result) {
+  const last = lastRepairAttempt(result);
+  if (last && last.resultStatus) return statusCauseLabel(last.resultStatus, last.resultCause || '');
+  return statusCauseLabel((result && result.status) || 'unknown', (result && result.cause) || '');
+}
+
+function firstTryLine(entry) {
+  const { result, status, moved } = entry;
+  const bits = [
+    `status: ${status}`,
+    `moved: ${movedLabel(moved)}`,
+  ];
+  if (result.timelineRef) bits.push(`timeline: ${timelineLabel(result)}`);
+  const summary = compactReportText(result.summary || result.error || '');
+  return `- **${reportText(result.id)}** · ${bits.map(reportText).join(' · ')}${summary ? ` · ${summary}` : ''}`;
+}
+
+function afterRepairLine(entry) {
+  const { result, status, moved } = entry;
+  const repair = result.repair || {};
+  const bits = [
+    `status: ${status}`,
+    `moved: ${movedLabel(moved)}`,
+    `original cause: ${repairFailureCause(result)}`,
+    `winningAction: ${repair.winningAction || 'unknown'}`,
+    `timeline: ${timelineLabel(result)}`,
+  ];
+  const diagnosis = repairDiagnosis(result);
+  if (diagnosis) bits.push(`diagnosis: ${diagnosis}`);
+  return `- **${reportText(result.id)}** · ${bits.map(reportText).join(' · ')}`;
+}
+
+function terminalStopLabel(cause) {
+  if (cause === 'genuinely_absent') return 'STOP: motion is genuinely absent at this target';
+  if (cause === 'genuinely_inert') return 'STOP: target is genuinely inert';
+  if (cause === 'cross_origin_iframe') return 'STOP: content is inside a cross-origin iframe';
+  if (cause === 'provider_error') return 'STOP: repair provider failed';
+  return 'STOP: needs human review';
+}
+
+function honestTerminalLine(entry) {
+  const { result } = entry;
+  const repair = result.repair || {};
+  const terminalCause = repair.terminalCause || 'needs_human';
+  const bits = [
+    terminalStopLabel(terminalCause),
+    `terminalCause: ${terminalCause}`,
+    `original cause: ${repairFailureCause(result)}`,
+  ];
+  const diagnosis = repairDiagnosis(result);
+  if (diagnosis) bits.push(`diagnosis: ${diagnosis}`);
+  return `- **${reportText(result.id)}** · ${bits.map(reportText).join(' · ')}`;
+}
+
+function stillUnrepairedLine(entry) {
+  const { result, status } = entry;
+  const bits = [
+    `original cause: ${repairFailureCause(result)}`,
+    `attempted actions: ${repairAttemptActions(result)}`,
+    `last engine result: ${repairLastEngineLabel(result)}`,
+    `current status: ${statusCauseLabel(status, result.cause || '')}`,
+  ];
+  const diagnosis = repairDiagnosis(result);
+  if (diagnosis) bits.push(`diagnosis: ${diagnosis}`);
+  return `- **${reportText(result.id)}** · ${bits.map(reportText).join(' · ')}`;
+}
+
 function buildReport(runDir) {
   const manifest = optionalJson(path.join(runDir, 'manifest.json'), {});
   const map = optionalJson(path.join(runDir, 'map.json'), null);
   const pageState = optionalJson(path.join(runDir, 'page-state.json'), { records: [] });
   const captureResults = captureResultsForReport(runDir);
   const assembled = optionalJson(path.join(runDir, 'animations.json'), null);
-  const rows = captureResults.results.map(result => {
+  const entries = captureResults.results.map(result => {
     const timeline = result.timelineRef ? optionalJson(path.join(runDir, result.timelineRef), {}) : {};
     const moved = timeline.meta?.elementsMoved ?? result.findings ?? '';
+    const status = captureStatus(result, timeline);
+    return { result, timeline, moved, status, bucket: repairBucket(result) };
+  });
+  const rows = entries.map(entry => {
+    const { result, timeline, moved, status } = entry;
     return tableRow([
       result.id,
       result.type,
       pageStrategyLabel(result.page),
-      captureStatus(result, timeline),
+      status,
       moved,
       result.stop || timeline.meta?.terminationReason || '',
       result.error || result.summary || timeline.summary || '',
       result.timelineRef || '',
     ]);
   });
-  const emptyRows = captureResults.results
-    .filter(result => {
-      const timeline = result.timelineRef ? optionalJson(path.join(runDir, result.timelineRef), {}) : {};
-      return captureStatus(result, timeline) === 'empty';
-    })
-    .map(result => `- **${reportText(result.id)}**${result.cause ? ` [cause: ${reportText(result.cause)}]` : ''}: ${reportText(result.summary || 'No animation captured')}. Try a tighter selector, a visible starting state, or a manual/in-view recipe.`);
-  const failedRows = captureResults.results
-    .filter(result => result.status === 'error')
-    .map(result => `- **${reportText(result.id)}**${result.cause ? ` [cause: ${reportText(result.cause)}]` : ''}: ${reportText(result.error || result.summary || 'Capture failed')}`);
+  const firstTryRows = entries.filter(entry => entry.bucket === 'first-try').map(firstTryLine);
+  const afterRepairRows = entries.filter(entry => entry.bucket === 'after-repair').map(afterRepairLine);
+  const honestTerminalRows = entries.filter(entry => entry.bucket === 'honest-terminal').map(honestTerminalLine);
+  const stillUnrepairedRows = entries.filter(entry => entry.bucket === 'still-unrepaired').map(stillUnrepairedLine);
+  const emptyRows = entries
+    .filter(entry => entry.bucket === 'first-try' && entry.status === 'empty')
+    .map(entry => `- **${reportText(entry.result.id)}**${entry.result.cause ? ` [cause: ${reportText(entry.result.cause)}]` : ''}: ${reportText(entry.result.summary || 'No animation captured')}. Try a tighter selector, a visible starting state, or a manual/in-view recipe.`);
+  const failedRows = entries
+    .filter(entry => entry.bucket === 'first-try' && entry.result.status === 'error')
+    .map(entry => `- **${reportText(entry.result.id)}**${entry.result.cause ? ` [cause: ${reportText(entry.result.cause)}]` : ''}: ${reportText(entry.result.error || entry.result.summary || 'Capture failed')}`);
 
   const lines = [];
   lines.push('# Yoinked Motion Report');
@@ -3489,6 +3618,30 @@ function buildReport(runDir) {
   } else {
     lines.push('No timelines have been saved yet.');
   }
+  lines.push('');
+
+  lines.push('## First-try');
+  lines.push('');
+  if (firstTryRows.length) lines.push(...firstTryRows);
+  else lines.push('- None.');
+  lines.push('');
+
+  lines.push('## After-repair');
+  lines.push('');
+  if (afterRepairRows.length) lines.push(...afterRepairRows);
+  else lines.push('- None.');
+  lines.push('');
+
+  lines.push('## Honest terminal');
+  lines.push('');
+  if (honestTerminalRows.length) lines.push(...honestTerminalRows);
+  else lines.push('- None.');
+  lines.push('');
+
+  lines.push('## Still unrepaired');
+  lines.push('');
+  if (stillUnrepairedRows.length) lines.push(...stillUnrepairedRows);
+  else lines.push('- None.');
   lines.push('');
 
   if (emptyRows.length) {

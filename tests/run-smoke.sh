@@ -699,6 +699,106 @@ grep -q 'empty-scroll' "$TMP_ASSEMBLE/report.md"
 grep -q 'Failed Captures' "$TMP_ASSEMBLE/report.md"
 grep -q 'failed-hover' "$TMP_ASSEMBLE/report.md"
 
+REPAIR_REPORT_DIR="$(mktemp -d)"
+cat >"$REPAIR_REPORT_DIR/manifest.json" <<'JSON'
+{ "url": "http://example.test/", "viewport": [800, 600], "captures": [] }
+JSON
+cat >"$REPAIR_REPORT_DIR/capture-results.json" <<'JSON'
+{
+  "capturedAt": "2026-06-15T00:00:00.000Z",
+  "count": 4,
+  "results": [
+    {
+      "id": "plain-empty",
+      "type": "hover",
+      "status": "empty",
+      "summary": "no animation captured",
+      "findings": 0,
+      "cause": "pseudo_element",
+      "origin": "first-try"
+    },
+    {
+      "id": "repair-win",
+      "type": "hover",
+      "status": "ok",
+      "summary": "Visible card moved after repair.",
+      "findings": 2,
+      "timelineRef": "timelines/repair-win.json",
+      "origin": "after-repair",
+      "repair": {
+        "attempted": true,
+        "failureCause": "occlusion",
+        "attempts": [
+          { "action": "retarget_selector", "params": { "selector": ".visible-card" }, "confidence": 0.8, "resultStatus": "ok", "resultCause": null }
+        ],
+        "winningAction": "retarget_selector",
+        "outcome": "ok-after-repair",
+        "terminalCause": null
+      }
+    },
+    {
+      "id": "repair-stop",
+      "type": "hover",
+      "status": "empty",
+      "summary": "no animation captured",
+      "findings": 0,
+      "cause": "inert_representative",
+      "origin": "first-try",
+      "terminalDiagnosis": "No occluder and nothing animatable near target.",
+      "repair": {
+        "attempted": true,
+        "failureCause": "inert_representative",
+        "attempts": [
+          { "action": "terminal_give_up", "params": { "terminalCause": "genuinely_absent", "rationale": "No occluder and nothing animatable near target." }, "confidence": 0.9, "resultStatus": null, "resultCause": null }
+        ],
+        "winningAction": null,
+        "outcome": "terminal",
+        "terminalCause": "genuinely_absent"
+      }
+    },
+    {
+      "id": "repair-low",
+      "type": "hover",
+      "status": "error",
+      "error": "element is covered by another element",
+      "findings": 0,
+      "cause": "occlusion",
+      "origin": "first-try",
+      "lowConfidenceDiagnosis": "Only a weak selector guess was available.",
+      "repair": {
+        "attempted": true,
+        "failureCause": "occlusion",
+        "attempts": [
+          { "action": "retarget_selector", "params": { "selector": ".maybe-card" }, "confidence": 0.2, "resultStatus": "skipped-low-confidence", "resultCause": null }
+        ],
+        "winningAction": null,
+        "outcome": "unrepaired",
+        "terminalCause": null
+      }
+    }
+  ]
+}
+JSON
+"$ROOT/bin/yoinkit" report "$REPAIR_REPORT_DIR" >/dev/null
+grep -q '^## First-try' "$REPAIR_REPORT_DIR/report.md"
+grep -q '^## After-repair' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'winningAction: retarget_selector' "$REPAIR_REPORT_DIR/report.md"
+grep -q '^## Honest terminal' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'STOP: motion is genuinely absent at this target' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'terminalCause: genuinely_absent' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'diagnosis: No occluder and nothing animatable near target.' "$REPAIR_REPORT_DIR/report.md"
+grep -q '^## Still unrepaired' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'repair-low.*diagnosis: Only a weak selector guess was available.' "$REPAIR_REPORT_DIR/report.md"
+if awk '/^## Empty Captures/{inside=1; next} /^## /{inside=0} inside{print}' "$REPAIR_REPORT_DIR/report.md" | grep -q 'repair-stop'; then
+  echo "terminal repair leaked into Empty Captures" >&2
+  exit 1
+fi
+if awk '/^## Failed Captures/{inside=1; next} /^## /{inside=0} inside{print}' "$REPAIR_REPORT_DIR/report.md" | grep -q 'repair-low'; then
+  echo "unrepaired repair leaked into Failed Captures" >&2
+  exit 1
+fi
+rm -rf "$REPAIR_REPORT_DIR"
+
 # --- calib-metrics reads the structured `cause` field (legacy keyword map is
 # --- only a fallback); map.dominantIframe populates wrong_document. -----------
 CAUSE_DIR="$(mktemp -d)"
