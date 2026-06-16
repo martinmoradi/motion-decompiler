@@ -100,6 +100,25 @@ function validRepair(selector = '.fixed') {
   };
 }
 
+function terminalRepair(cause = 'needs_human') {
+  return {
+    diagnosis: 'No more stable action hypotheses remain.',
+    rootCause: 'ambiguous',
+    confidence: 0.9,
+    action: { kind: 'terminal_give_up', terminalCause: cause, rationale: 'Stop after ranked actions fail.' },
+    successCriterion: { expect: 'moved' },
+  };
+}
+
+function rankedOutput(id, primary = '.miss', fallback = '.fixed', terminalCause = 'needs_human') {
+  return {
+    captureId: id,
+    primary: validRepair(primary),
+    fallback: validRepair(fallback),
+    terminal: terminalRepair(terminalCause),
+  };
+}
+
 function state(runDir) {
   return readJson(path.join(runDir, 'repair', 'loop-state.json'));
 }
@@ -116,18 +135,21 @@ test('init discovers repairable rows and computes budget', () => {
   expect(s.records[0].originalResultTriple).toBe('empty|occlusion|.cover');
 });
 
-test('next-prompts writes attempt-1 prompts and caps the batch at six', () => {
-  const { runDir, manifestFile } = mkRun(7);
+test('next-prompts writes attempt-1 batch prompts for up to ten captures', () => {
+  const { runDir, manifestFile } = mkRun(10);
   runLoop('init', { run: runDir, manifest: manifestFile });
   const out = runLoop('next-prompts', { run: runDir });
   const s = state(runDir);
 
-  expect(out.prompts).toBe(6);
-  expect(out.items).toHaveLength(6);
+  expect(out.prompts).toBe(4);
+  expect(out.items).toHaveLength(4);
+  expect(out.items[0].batchId).toBe('batch-1');
+  expect(out.items[0].captures).toHaveLength(3);
+  expect(out.items[3].captures).toHaveLength(1);
   expect(fs.existsSync(out.items[0].prompt)).toBe(true);
   expect(fs.readFileSync(out.items[0].prompt, 'utf8')).toContain('Diagnosis subagent');
-  expect(s.records.filter(r => r.state === 'waiting-output')).toHaveLength(6);
-  expect(s.records.filter(r => r.state === 'needs-diagnosis')).toHaveLength(1);
+  expect(s.records.filter(r => r.state === 'waiting-output')).toHaveLength(10);
+  expect(s.records.filter(r => r.state === 'needs-diagnosis')).toHaveLength(0);
 });
 
 test('save-output stores valid and invalid outputs, and invalid output applies as provider_error terminal', () => {
@@ -165,6 +187,106 @@ test('apply-ready converges a repair and preserves repair-step provenance', () =
   expect(row.origin).toBe('after-repair');
   expect(row.repair.outcome).toBe('ok-after-repair');
   expect(row.repair.winningAction).toBe('retarget_selector');
+});
+
+test('batch save-output stores primary, fallback, and terminal hypotheses by captureId', () => {
+  const { runDir, manifestFile, ids } = mkRun(3);
+  runLoop('init', { run: runDir, manifest: manifestFile });
+  const prompts = runLoop('next-prompts', { run: runDir });
+  const batchId = prompts.items[0].batchId;
+  const outputs = ids.slice(0, 3).map(id => rankedOutput(id, `.primary-${id}`, `.fallback-${id}`, 'needs_human'));
+
+  const saved = runLoop('save-output', { run: runDir, batch: batchId }, JSON.stringify(outputs));
+  const s = state(runDir);
+
+  expect(saved.saved).toBe(3);
+  expect(saved.ready).toBe(3);
+  expect(saved.items.every(item => item.fallbackQueued && item.terminalQueued)).toBe(true);
+  expect(s.records[0].state).toBe('ready');
+  expect(s.records[0].attempts[0].hypothesisRole).toBe('primary');
+  expect(s.records[0].hypothesisQueue[0].role).toBe('fallback');
+  expect(s.records[0].terminalHypothesis.action.kind).toBe('terminal_give_up');
+});
+
+test('primary batch hypothesis failure queues fallback without a new prompt', () => {
+  const { runDir, manifestFile, ids } = mkRun(1);
+  runLoop('init', { run: runDir, manifest: manifestFile });
+  const prompts = runLoop('next-prompts', { run: runDir });
+  runLoop('save-output', { run: runDir, batch: prompts.items[0].batchId }, JSON.stringify([rankedOutput(ids[0], '.miss', '.fixed')]));
+
+  const applied = runLoop('apply-ready', { run: runDir }, undefined, { FAKE_ENGINE_STATUS: 'empty' });
+  const s = state(runDir);
+  const next = runLoop('next-prompts', { run: runDir });
+
+  expect(applied.applied).toBe(1);
+  expect(applied.items[0].queuedHypothesis).toEqual({ attempt: 2, role: 'fallback' });
+  expect(s.records[0].state).toBe('ready');
+  expect(s.records[0].attempts[1].hypothesisRole).toBe('fallback');
+  expect(next.prompts).toBe(0);
+});
+
+test('fallback batch hypothesis can succeed and promote engine-measured results', () => {
+  const { runDir, manifestFile, ids } = mkRun(1);
+  runLoop('init', { run: runDir, manifest: manifestFile });
+  const prompts = runLoop('next-prompts', { run: runDir });
+  runLoop('save-output', { run: runDir, batch: prompts.items[0].batchId }, JSON.stringify([rankedOutput(ids[0], '.miss', '.fixed')]));
+  runLoop('apply-ready', { run: runDir }, undefined, { FAKE_ENGINE_STATUS: 'empty' });
+
+  const applied = runLoop('apply-ready', { run: runDir }, undefined, { FAKE_ENGINE_STATUS: 'ok', FAKE_MOVED: '.fixed' });
+  const s = state(runDir);
+  const row = readJson(path.join(runDir, 'capture-results.json')).results[0];
+
+  expect(applied.applied).toBe(1);
+  expect(s.budgetSpent).toBe(2);
+  expect(s.records[0].state).toBe('ok-after-repair');
+  expect(row.origin).toBe('after-repair');
+  expect(row.repair.outcome).toBe('ok-after-repair');
+  expect(row.repair.attempts).toHaveLength(2);
+});
+
+test('terminal batch hypothesis applies after primary and fallback both fail', () => {
+  const { runDir, manifestFile, ids } = mkRun(1);
+  runLoop('init', { run: runDir, manifest: manifestFile });
+  const prompts = runLoop('next-prompts', { run: runDir });
+  runLoop('save-output', { run: runDir, batch: prompts.items[0].batchId }, JSON.stringify([rankedOutput(ids[0], '.miss', '.miss-again', 'needs_human')]));
+  runLoop('apply-ready', { run: runDir }, undefined, { FAKE_ENGINE_STATUS: 'empty' });
+
+  const applied = runLoop('apply-ready', { run: runDir }, undefined, { FAKE_ENGINE_STATUS: 'empty' });
+  const s = state(runDir);
+  const row = readJson(path.join(runDir, 'capture-results.json')).results[0];
+
+  expect(applied.items[0].terminalized.terminalCause).toBe('needs_human');
+  expect(s.budgetSpent).toBe(2);
+  expect(s.records[0].state).toBe('terminal');
+  expect(row.repair.outcome).toBe('terminal');
+  expect(row.repair.terminalCause).toBe('needs_human');
+});
+
+test('repeated-identical primary failure does not preempt a queued fallback', () => {
+  const inertContext = {
+    animatableHere: { selfHover: false, pseudoHover: false, childAnimated: false, scrollTriggerBound: false },
+    candidateTriggers: [{ selector: '.next' }],
+    matches: [{ occludedBy: null }],
+  };
+  const { runDir, manifestFile, ids } = mkRun(1, inertContext);
+  const resultsFile = path.join(runDir, 'capture-results.json');
+  const resultsDoc = readJson(resultsFile);
+  resultsDoc.results[0].cause = 'inert_representative';
+  resultsDoc.results[0].causeSignals = {};
+  writeJson(resultsFile, resultsDoc);
+
+  runLoop('init', { run: runDir, manifest: manifestFile });
+  const prompts = runLoop('next-prompts', { run: runDir });
+  runLoop('save-output', { run: runDir, batch: prompts.items[0].batchId }, JSON.stringify([rankedOutput(ids[0], '.miss', '.fixed', 'genuinely_inert')]));
+
+  const applied = runLoop('apply-ready', { run: runDir }, undefined, { FAKE_ENGINE_STATUS: 'empty' });
+  const s = state(runDir);
+  const row = readJson(path.join(runDir, 'capture-results.json')).results[0];
+
+  expect(applied.items[0].terminalized).toBe(null);
+  expect(applied.items[0].queuedHypothesis).toEqual({ attempt: 2, role: 'fallback' });
+  expect(s.records[0].state).toBe('ready');
+  expect(row.repair.outcome).toBe('unrepaired');
 });
 
 test('a distinct failed attempt produces an attempt-2 prompt with history', () => {
