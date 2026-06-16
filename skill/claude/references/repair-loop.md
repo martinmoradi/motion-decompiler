@@ -42,7 +42,7 @@ file content.)
 For each repairable result, in order, if `budget > 0`:
 
 ```bash
-node skill/claude/scripts/repair-step.js apply \
+bun skill/claude/scripts/repair-step.js apply \
   --run <run> --manifest <manifest-you-captured-with> \
   --index <result index in R> --id <id> \
   --output <run>/repair/<id>.attempt-1.output.json --attempt 1
@@ -82,7 +82,7 @@ if `attempt < maxRetries` and `budget > 0`:
 2. Apply attempt 2:
 
    ```bash
-   node skill/claude/scripts/repair-step.js apply \
+   bun skill/claude/scripts/repair-step.js apply \
      --run <run> --manifest <manifest> --index <i> --id <id> \
      --output <run>/repair/<id>.attempt-2.output.json --attempt 2
    ```
@@ -93,7 +93,7 @@ if `attempt < maxRetries` and `budget > 0`:
      not converging. Stop and record an honest terminal:
 
      ```bash
-     node skill/claude/scripts/repair-step.js terminal --run <run> --id <id> --attempt 2 \
+     bun skill/claude/scripts/repair-step.js terminal --run <run> --id <id> --attempt 2 \
        --cause <genuinely_inert|needs_human> --diagnosis "repeated-identical; not converging"
      ```
 

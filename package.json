@@ -1,0 +1,11 @@
+{
+  "type": "commonjs",
+  "packageManager": "bun@1.3.13",
+  "scripts": {
+    "yoinkit": "bun ./bin/yoinkit",
+    "calib-metrics": "bun ./bin/calib-metrics",
+    "test:unit": "bun ./tests/decode-transform.test.js && bun ./tests/spec-shaping.test.js && bun ./tests/repair-loop.test.js && bun ./tests/repair-step.test.js && bun ./tests/filter-manifest.test.js",
+    "test:repair-step": "bun ./tests/repair-step.test.js",
+    "smoke": "bash ./tests/run-smoke.sh"
+  }
+}

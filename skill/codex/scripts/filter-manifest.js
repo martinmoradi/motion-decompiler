@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * filter-manifest.js — narrow a proposed manifest to the captures a TARGETED
@@ -6,9 +6,9 @@
  * (url, viewport, captureStrategy, captureGroups, wait settings) so the filtered
  * manifest captures identically — just fewer animations.
  *
- *   node filter-manifest.js --in manifest.proposed.json --out manifest.targeted.json \
+ *   bun filter-manifest.js --in manifest.proposed.json --out manifest.targeted.json \
  *        --ids "hero-load,hero-headline-reveal"
- *   node filter-manifest.js --in ... --out ... --grep "hero|headline"
+ *   bun filter-manifest.js --in ... --out ... --grep "hero|headline"
  *
  * --ids matches capture.id exactly (comma list). --grep matches a regex against a
  * capture's id + root/selector/target + group + label. At least one of the two is

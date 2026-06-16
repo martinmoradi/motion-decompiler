@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * repair-step.js — the skill's apply+re-measure+record primitive for ONE repair
@@ -187,7 +187,7 @@ function cmdApply(args, tool, m) {
   writeJson(subManifestFile, subManifest);
 
   // The ENGINE measures. Tool stdout/stderr go to the run log, never to ours.
-  const run = spawnSync(tool, ['capture', subRun, subManifestFile], { encoding: 'utf8', env: process.env });
+  const run = spawnSync(process.execPath, [tool, 'capture', subRun, subManifestFile], { encoding: 'utf8', env: process.env });
   const log = `\n[repair-step apply ${id} att${attempt}] ${kind}\n${run.stdout || ''}${run.stderr || ''}\n`;
   try { fs.appendFileSync(path.join(runDir, 'run.log'), log); } catch (e) { /* ignore */ }
   if (run.status !== 0 && !fs.existsSync(path.join(subRun, 'capture-results.json'))) {

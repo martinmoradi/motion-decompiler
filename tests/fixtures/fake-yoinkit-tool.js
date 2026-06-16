@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * Test double for bin/yoinkit, used by repair-step.test.js.

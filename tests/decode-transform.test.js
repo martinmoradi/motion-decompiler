@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /* Unit test for the engine's matrix decoder (window.__cap._decodeTransform).
  *
  * Pure math, no browser: the single engine file is loaded in a vm context with

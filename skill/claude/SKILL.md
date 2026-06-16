@@ -12,7 +12,7 @@ description: >-
   those are yoinking requests. No auto-trigger from keywords; explicit
   /yoinkit invocation only.
 compatibility: >-
-  Run from the YoinkIt repo root. Needs node and agent-browser
+  Run from the YoinkIt repo root. Needs Bun and agent-browser
   (the tool self-drives a real headed browser via bin/capture-browser). Repair
   diagnosis uses parallel subagents (the Agent tool).
 ---
@@ -79,7 +79,7 @@ reveals), `manifest.proposed.json` (the proposed capture manifest), and
   hover capture whose `root` is under that component). Write a filtered manifest:
 
   ```bash
-  node skill/claude/scripts/filter-manifest.js \
+  bun skill/claude/scripts/filter-manifest.js \
     --in <run>/manifest.proposed.json --out <run>/manifest.targeted.json \
     --ids "hero-load,hero-headline-reveal"      # or --grep "hero|headline"
   ```

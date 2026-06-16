@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION="motion-smoke-$$"
 SERVER_LOG="$(mktemp)"
 TMP_ASSEMBLE=""
+BUN_CHECK_DIR=""
 export AGENT_BROWSER_CONFIRM_ACTIONS="${AGENT_BROWSER_CONFIRM_ACTIONS:-}"
 export AGENT_BROWSER_CONFIRM_INTERACTIVE="${AGENT_BROWSER_CONFIRM_INTERACTIVE:-false}"
 AB=(agent-browser --confirm-actions "" --confirm-interactive false)
@@ -19,21 +20,27 @@ PY
 )"
 URL="http://127.0.0.1:${PORT}/tests/fixtures/basic-motion.html"
 
-node --check "$ROOT/bin/yoinkit" >/dev/null
-node --check "$ROOT/bin/calib-metrics" >/dev/null
-node --check "$ROOT/extension/capture-animation.js" >/dev/null
-node --check "$ROOT/tests/fixtures/repair-stub-provider.js" >/dev/null
-node --check "$ROOT/tests/fixtures/fake-yoinkit-tool.js" >/dev/null
-node --check "$ROOT/skill/codex/scripts/repair-step.js" >/dev/null
-node --check "$ROOT/skill/codex/scripts/filter-manifest.js" >/dev/null
-node "$ROOT/tests/decode-transform.test.js" >/dev/null
-node "$ROOT/tests/spec-shaping.test.js" >/dev/null
+BUN_CHECK_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUN_CHECK_DIR"' EXIT
+bun build \
+  "$ROOT/bin/yoinkit" \
+  "$ROOT/bin/calib-metrics" \
+  "$ROOT/extension/capture-animation.js" \
+  "$ROOT/tests/fixtures/repair-stub-provider.js" \
+  "$ROOT/tests/fixtures/fake-yoinkit-tool.js" \
+  "$ROOT/skill/codex/scripts/repair-step.js" \
+  "$ROOT/skill/codex/scripts/filter-manifest.js" \
+  --target=bun --outdir "$BUN_CHECK_DIR" >/dev/null
+rm -rf "$BUN_CHECK_DIR"
+BUN_CHECK_DIR=""
+bun "$ROOT/tests/decode-transform.test.js" >/dev/null
+bun "$ROOT/tests/spec-shaping.test.js" >/dev/null
 # Capture-repair loop (Part 6) — browser-free, model-free: loop mechanics +
 # the external-command provider transport against the deterministic stub.
-node "$ROOT/tests/repair-loop.test.js" >/dev/null
+bun "$ROOT/tests/repair-loop.test.js" >/dev/null
 # repair-step.js apply/terminal bridge + filter-manifest selection (browser-free).
-node "$ROOT/tests/repair-step.test.js" >/dev/null
-node "$ROOT/tests/filter-manifest.test.js" >/dev/null
+bun "$ROOT/tests/repair-step.test.js" >/dev/null
+bun "$ROOT/tests/filter-manifest.test.js" >/dev/null
 "$ROOT/bin/yoinkit" --help | grep -q 'scout <url>'
 "$ROOT/bin/yoinkit" --help | grep -q 'yoink <run-dir>'
 
@@ -50,6 +57,9 @@ cleanup() {
   rm -f "$ROOT/tests/fixtures/_xorigin-shell.html"
   if [[ -n "$TMP_ASSEMBLE" ]]; then
     rm -rf "$TMP_ASSEMBLE"
+  fi
+  if [[ -n "$BUN_CHECK_DIR" ]]; then
+    rm -rf "$BUN_CHECK_DIR"
   fi
   rm -f "$SERVER_LOG"
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * Capture-repair loop smoke — browser-free and model-free (design §1).
@@ -21,7 +21,8 @@ const path = require('path');
 
 const m = require('../bin/yoinkit');
 const STUB = path.join(__dirname, 'fixtures', 'repair-stub-provider.js');
-const STUB_CMD = `node ${STUB}`;
+const RUNTIME = process.execPath;
+const STUB_CMD = `${RUNTIME} ${STUB}`;
 
 const CONFIG = {
   maxRetries: 2,
@@ -305,7 +306,7 @@ function ok(name, cond) {
         repair: { attempted: true, failureCause: 'inert_representative', attempts: [{ action: 'terminal_give_up' }], winningAction: null, outcome: 'terminal', terminalCause: 'genuinely_inert' } },
     ],
   }));
-  const r = require('child_process').spawnSync('node', [path.join(__dirname, '..', 'bin', 'calib-metrics'), dir, '--site', 'm'], { encoding: 'utf8' });
+  const r = require('child_process').spawnSync(RUNTIME, [path.join(__dirname, '..', 'bin', 'calib-metrics'), dir, '--site', 'm'], { encoding: 'utf8' });
   const metrics = JSON.parse(fs.readFileSync(path.join(dir, 'metrics.json'), 'utf8'));
   ok('metrics: command succeeded', r.status === 0);
   ok('metrics: win bucketed under occlusion (not "other")', metrics.repair.by_bucket.occlusion && metrics.repair.by_bucket.occlusion.ok === 1);
@@ -341,7 +342,7 @@ function ok(name, cond) {
   }, null, 2));
   const parsed = m.invokeRepairProvider(STUB_CMD, inputFile, null);
   ok('transport: provider output parsed from printed path', parsed && parsed.action && parsed.action.kind === 'terminal_give_up');
-  ok('transport: bad command -> null (fail safe)', m.invokeRepairProvider('node /no/such/stub.js', inputFile, null) === null);
+  ok('transport: bad command -> null (fail safe)', m.invokeRepairProvider(`${RUNTIME} /no/such/stub.js`, inputFile, null) === null);
 
   // SF7: a provider that prints diagnostics AFTER the path still resolves.
   const noisyStub = path.join(runDir, 'noisy-stub.js');
@@ -352,7 +353,7 @@ function ok(name, cond) {
     'fs.writeFileSync(outPath, JSON.stringify({ diagnosis: "ok", rootCause: "occlusion", confidence: 0.7, action: { kind: "retarget_selector", selector: ".p" }, successCriterion: { expect: "moved" } }));',
     'process.stdout.write("starting provider...\\n" + outPath + "\\ndone (cleanup ok)\\n");',
   ].join('\n'));
-  const noisy = m.invokeRepairProvider(`node ${noisyStub}`, inputFile, null);
+  const noisy = m.invokeRepairProvider(`${RUNTIME} ${noisyStub}`, inputFile, null);
   ok('SF7: output path found despite trailing diagnostics', noisy && noisy.action && noisy.action.kind === 'retarget_selector');
 }
 

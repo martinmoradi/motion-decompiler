@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * filter-manifest.js coverage — pure selection, no browser.
@@ -27,7 +27,7 @@ fs.writeFileSync(inFile, JSON.stringify({
 }));
 
 function run(args) {
-  return spawnSync('node', [SCRIPT, ...args], { encoding: 'utf8' });
+  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
 }
 
 // --grep with no value: parseArgs would make it `true`; must fail, not match all.

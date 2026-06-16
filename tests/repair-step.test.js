@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * repair-step.js coverage — browser-free, model-free.
@@ -43,7 +43,7 @@ function mkRun(resultRow) {
 function runStep(sub, args, env = {}) {
   const argv = [SCRIPT, sub];
   for (const [k, v] of Object.entries(args)) { argv.push(`--${k}`); if (v !== true) argv.push(String(v)); }
-  const r = spawnSync('node', argv, { encoding: 'utf8', env: Object.assign({}, process.env, { YOINKIT_BIN: FAKE }, env) });
+  const r = spawnSync(process.execPath, argv, { encoding: 'utf8', env: Object.assign({}, process.env, { YOINKIT_BIN: FAKE }, env) });
   if (r.status !== 0) throw new Error(`repair-step ${sub} exited ${r.status}: ${r.stderr}`);
   return { stdout: r.stdout, verdict: JSON.parse(r.stdout.trim().split('\n').filter(Boolean).pop()) };
 }

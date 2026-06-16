@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /* Unit tests for the assembler's spec-shaping helpers in bin/yoinkit:
  *
  *  (a) vendor de-rank  — third-party/injected animations (Shop Pay, Intercom,

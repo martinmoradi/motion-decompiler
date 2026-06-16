@@ -22,7 +22,7 @@ code.
 
 ## Compatibility
 
-Run from the YoinkIt repo root. Needs node and agent-browser; the tool
+Run from the YoinkIt repo root. Needs Bun and agent-browser; the tool
 self-drives a real headed browser via `bin/capture-browser`.
 
 For repair diagnosis, use a Codex multi-agent/subagent tool when one is available
@@ -86,7 +86,7 @@ reveals), `manifest.proposed.json` (the proposed capture manifest), and
   hover capture whose `root` is under that component). Write a filtered manifest:
 
   ```bash
-  node skill/codex/scripts/filter-manifest.js \
+  bun skill/codex/scripts/filter-manifest.js \
     --in <run>/manifest.proposed.json --out <run>/manifest.targeted.json \
     --ids "hero-load,hero-headline-reveal"      # or --grep "hero|headline"
   ```

@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 'use strict';
 /*
  * Deterministic, model-free stub repair provider (design §1, §5).
  *
  * Implements the external-command contract exactly:
- *   node repair-stub-provider.js <input.json>   ->   writes <output.json>,
+ *   bun repair-stub-provider.js <input.json>    ->   writes <output.json>,
  *                                                     prints its path on stdout
  *
  * It returns canned repairs branched ONLY on structural fields of the diagnosis
