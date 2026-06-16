@@ -15,6 +15,11 @@
  * orchestration around it.
  *
  * Subcommands:
+ *   save-output --run R --id ID --attempt N
+ *            Read one raw §3 JSON object from stdin, validate it with the tool's
+ *            schema helper, and save it to <run>/repair/<id>.attempt-<n>.output.json.
+ *            Prints a one-line verdict JSON; invalid input exits non-zero.
+ *
  *   apply    --run R --manifest M --index I --id ID --output OUT.json --attempt N
  *            Route the §3 output:
  *              - invalid                -> record terminal(provider_error), no measure
@@ -68,6 +73,7 @@ function parseArgs(argv) {
 }
 
 function readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+function readStdinJson() { return JSON.parse(fs.readFileSync(0, 'utf8')); }
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
@@ -109,6 +115,38 @@ function verdict(obj) { process.stdout.write(`${JSON.stringify(obj)}\n`); }
 // through verbatim.
 function normalizeTerminalCause(cause, m) {
   return m.TERMINAL_CAUSES.includes(cause) ? cause : 'needs_human';
+}
+
+// ── save-output ──────────────────────────────────────────────────────────────
+function cmdSaveOutput(args, m) {
+  const runDir = path.resolve(req(args, 'run'));
+  const id = String(req(args, 'id'));
+  const attempt = Number(args.attempt || 1);
+  const outputFile = path.join(runDir, 'repair', `${id}.attempt-${attempt}.output.json`);
+
+  let output;
+  try { output = readStdinJson(); }
+  catch (e) {
+    verdict({ saved: false, valid: false, id, attempt, error: `invalid JSON on stdin: ${e.message}` });
+    process.exit(2);
+  }
+
+  const validated = m.validateRepairOutput(output);
+  if (!validated.valid) {
+    verdict({ saved: false, valid: false, id, attempt, error: validated.error });
+    process.exit(2);
+  }
+
+  writeJson(outputFile, output);
+  verdict({
+    saved: true,
+    valid: true,
+    id,
+    attempt,
+    output: outputFile,
+    kind: validated.repair.action.kind,
+    confidence: validated.repair.confidence,
+  });
 }
 
 // ── apply ────────────────────────────────────────────────────────────────────
@@ -322,9 +360,10 @@ function main() {
   const args = parseArgs(rest);
   const tool = findTool();
   const m = require(tool);
-  if (sub === 'apply') cmdApply(args, tool, m);
+  if (sub === 'save-output') cmdSaveOutput(args, m);
+  else if (sub === 'apply') cmdApply(args, tool, m);
   else if (sub === 'terminal') cmdTerminal(args, m);
-  else fail(`unknown subcommand "${sub}" (use: apply | terminal)`);
+  else fail(`unknown subcommand "${sub}" (use: save-output | apply | terminal)`);
 }
 
 main();

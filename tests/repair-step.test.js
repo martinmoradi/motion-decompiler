@@ -46,12 +46,30 @@ function mkRun(resultRow) {
   return runDir;
 }
 
-function runStep(sub, args, env = {}) {
+function parseVerdict(stdout) {
+  return JSON.parse(stdout.trim().split('\n').filter(Boolean).pop());
+}
+
+function runStepRaw(sub, args, env = {}, input = undefined) {
   const argv = [SCRIPT, sub];
   for (const [k, v] of Object.entries(args)) { argv.push(`--${k}`); if (v !== true) argv.push(String(v)); }
-  const r = spawnSync(process.execPath, argv, { encoding: 'utf8', env: Object.assign({}, process.env, { YOINKIT_BIN: FAKE }, env) });
+  return spawnSync(process.execPath, argv, { encoding: 'utf8', input, env: Object.assign({}, process.env, { YOINKIT_BIN: FAKE }, env) });
+}
+
+function runStep(sub, args, env = {}, input = undefined) {
+  const r = runStepRaw(sub, args, env, input);
   if (r.status !== 0) throw new Error(`repair-step ${sub} exited ${r.status}: ${r.stderr}`);
-  return { stdout: r.stdout, verdict: JSON.parse(r.stdout.trim().split('\n').filter(Boolean).pop()) };
+  return { stdout: r.stdout, verdict: parseVerdict(r.stdout) };
+}
+
+function validRepairOutput(selector = '.fixed') {
+  return {
+    diagnosis: 'target the visible moving affordance',
+    rootCause: 'occlusion',
+    confidence: 0.8,
+    action: { kind: 'retarget_selector', selector },
+    successCriterion: { expect: 'moved' },
+  };
 }
 
 test('apply converges, clears stale failure fields, and promotes timelineRef', () => {
@@ -139,4 +157,57 @@ test('terminal preserves valid causes', () => {
   runStep('terminal', { run: runDir, id: 'y', cause: 'genuinely_inert', attempt: 1 });
   const row = readJson(path.join(runDir, 'capture-results.json')).results[0];
   expect(row.repair.terminalCause).toBe('genuinely_inert');
+});
+
+test('save-output validates stdin, writes deterministic output, and apply consumes it', () => {
+  const runDir = mkRun({ id: 'save-cap', type: 'hover', status: 'empty', cause: 'occlusion', findings: 0 });
+  const manifestFile = path.join(runDir, 'manifest.json');
+  writeJson(manifestFile, { url: 'https://example.test/', captures: [{ id: 'save-cap', type: 'hover', root: '.old' }] });
+
+  const output = validRepairOutput('.new-target');
+  const saved = runStep('save-output', { run: runDir, id: 'save-cap', attempt: 1 }, {}, JSON.stringify(output));
+  const outputFile = path.join(runDir, 'repair', 'save-cap.attempt-1.output.json');
+
+  expect(saved.verdict.saved).toBe(true);
+  expect(saved.verdict.valid).toBe(true);
+  expect(saved.verdict.id).toBe('save-cap');
+  expect(saved.verdict.attempt).toBe(1);
+  expect(saved.verdict.output).toBe(outputFile);
+  expect(saved.verdict.kind).toBe('retarget_selector');
+  expect(saved.verdict.confidence).toBe(0.8);
+  expect(readJson(outputFile)).toEqual(output);
+
+  const applied = runStep('apply',
+    { run: runDir, manifest: manifestFile, index: 0, id: 'save-cap', output: outputFile, attempt: 1 },
+    { FAKE_ENGINE_STATUS: 'ok', FAKE_MOVED: '.new-target' });
+
+  expect(applied.verdict.converged).toBe(true);
+  expect(readJson(path.join(runDir, 'capture-results.json')).results[0].repair.outcome).toBe('ok-after-repair');
+});
+
+test('save-output rejects malformed stdin and writes nothing', () => {
+  const runDir = mkRun({ id: 'bad-json', type: 'hover', status: 'empty', cause: 'occlusion', findings: 0 });
+  const r = runStepRaw('save-output', { run: runDir, id: 'bad-json', attempt: 1 }, {}, '{ nope');
+  const outputFile = path.join(runDir, 'repair', 'bad-json.attempt-1.output.json');
+  const verdict = parseVerdict(r.stdout);
+
+  expect(r.status).toBe(2);
+  expect(verdict.saved).toBe(false);
+  expect(verdict.valid).toBe(false);
+  expect(verdict.error.includes('invalid JSON on stdin')).toBe(true);
+  expect(fs.existsSync(outputFile)).toBe(false);
+});
+
+test('save-output rejects schema-invalid stdin and writes nothing', () => {
+  const runDir = mkRun({ id: 'bad-schema', type: 'hover', status: 'empty', cause: 'occlusion', findings: 0 });
+  const invalid = Object.assign(validRepairOutput(), { action: { kind: 'retarget_selector' } });
+  const r = runStepRaw('save-output', { run: runDir, id: 'bad-schema', attempt: 1 }, {}, JSON.stringify(invalid));
+  const outputFile = path.join(runDir, 'repair', 'bad-schema.attempt-1.output.json');
+  const verdict = parseVerdict(r.stdout);
+
+  expect(r.status).toBe(2);
+  expect(verdict.saved).toBe(false);
+  expect(verdict.valid).toBe(false);
+  expect(verdict.error).toBe('retarget_selector needs a concrete selector');
+  expect(fs.existsSync(outputFile)).toBe(false);
 });

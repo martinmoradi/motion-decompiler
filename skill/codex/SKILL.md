@@ -126,7 +126,9 @@ how to call `repair-step.js`, how Phase C threads attempt history). In short:
   workers at once; queue overflow in later batches or run serially. It returns
   **strictly** the §3 output schema (a closed action enum + a machine-checkable
   `successCriterion`, defaulting to `expect: moved`). It never proposes a
-  duration/easing/from-to. Save each as
+  duration/easing/from-to. Pipe each final JSON message through:
+  `bun skill/codex/scripts/repair-step.js save-output --run <run> --id <id> --attempt 1`.
+  The helper validates it and writes
   `<run>/repair/<id>.attempt-1.output.json`.
 - **Phase B — apply + re-measure (serial, headed).** For each diagnosis, run
   `repair-step.js apply …`. It routes the output (terminal / low-confidence /
@@ -135,7 +137,7 @@ how to call `repair-step.js`, how Phase C threads attempt history). In short:
   only from the engine; success is machine-checked.
 - **Phase C — one retry.** For an actionable repair that didn't converge (and isn't
   terminal / repeated-identical), spawn one more subagent with the attempt history,
-  stage `attempt-2.output.json`, and apply again. Honor the ceilings:
+  pipe its final JSON through `save-output --attempt 2`, and apply again. Honor the ceilings:
   `maxRetries=2`, `budget=min(2×repairableCount, 24)`, confidence floor `0.4`,
   repeated-identical → honest terminal.
 

@@ -50,10 +50,18 @@ spawn_agent({
 })
 ```
 
-Save each subagent's final message verbatim to
-`<run>/repair/<id>.attempt-1.output.json`. (Subagents return raw JSON — that IS the
-file content: no prose, no code fence, no transcript wrapper.) Before Phase B,
-make sure every repairable capture you plan to apply has this output file.
+Pipe each subagent's final message verbatim into the deterministic output helper:
+
+```bash
+printf '%s\n' "$SUBAGENT_FINAL_JSON" | \
+  bun skill/codex/scripts/repair-step.js save-output \
+    --run <run> --id <id> --attempt 1
+```
+
+Subagents return raw JSON: no prose, no code fence, no transcript wrapper. The
+helper validates the §3 schema and writes
+`<run>/repair/<id>.attempt-1.output.json`; if it reports `valid:false`, treat that
+attempt as failed provider output and do not hand-edit the file.
 
 ## Phase B — apply + re-measure, serial per site (headed)
 
@@ -102,7 +110,8 @@ if `attempt < maxRetries` and `budget > 0`:
    > unchanged — refine it (a different instance, an extra precondition step, a
    > parent target), or give an honest `terminal_give_up` if nothing here animates.
 
-   Save the raw final JSON to `<run>/repair/<id>.attempt-2.output.json`.
+   Pipe the raw final JSON through `repair-step.js save-output --attempt 2`; it
+   writes `<run>/repair/<id>.attempt-2.output.json`.
 
 2. Apply attempt 2:
 

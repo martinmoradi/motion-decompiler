@@ -93,6 +93,7 @@ It's deliberately a single JS file; don't add build tooling without a real need.
 
 ## Repo conventions
 
-- Public repo, MIT. It's a personal project, so **direct commits to `main` are
-  fine** (no PR required) — just keep them coherent and semantic.
+- Work from a feature branch by default, even for this personal repo. Use the
+  `codex/` prefix unless Martin asks for another branch name.
+- Keep commits coherent and semantic.
 - Don't commit local captures (`*.animation.json`) — they're gitignored.

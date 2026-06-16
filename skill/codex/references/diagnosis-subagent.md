@@ -9,7 +9,8 @@ Spawn it with a Codex multi-agent/subagent tool when one is available. Discover
 that tool with `tool_search` if needed. Keep at most 6 workers open at once; run
 overflow in later batches or serially in the current agent. Pass the filled
 prompt as either the tool's `message` or `items`, never both. Its **entire final
-message must be the JSON** described below; save that verbatim to
+message must be the JSON** described below; the caller pipes that verbatim into
+`repair-step.js save-output`, which validates it and writes
 `<run>/repair/<id>.attempt-<N>.output.json`.
 
 ---
@@ -96,9 +97,8 @@ message must be the JSON** described below; save that verbatim to
 > override toward terminal is exactly your job.
 >
 > Output ONLY this JSON object as your entire final message (no prose, no code
-> fence). The caller saves this exact message to
-> `<run>/repair/<id>.attempt-<N>.output.json` and validates it with
-> `repair-step.js apply` before acting:
+> fence). The caller pipes this exact message into `repair-step.js save-output`,
+> then validates it again with `repair-step.js apply` before acting:
 >
 > ```json
 > {
