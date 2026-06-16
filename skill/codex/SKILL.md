@@ -11,10 +11,6 @@ description: >-
   usage, recommending a library, or reviewing existing animation code — none of
   those are decompilation requests. No auto-trigger from keywords; explicit
   /motion-decompiler invocation only.
-compatibility: >-
-  Run from the motion-decompiler repo root. Needs node and agent-browser
-  (the tool self-drives a real headed browser via bin/capture-browser). Repair
-  diagnosis uses parallel subagents (the Agent tool).
 ---
 
 # motion-decompiler
@@ -23,6 +19,17 @@ Decompile a live page's motion into an **agent-ready spec** — libraries, a
 summary, per-layer timing/easing, and per-frame timelines — that a *coding* agent
 later rebuilds from. The spec is the product; this skill never emits recreation
 code.
+
+## Compatibility
+
+Run from the motion-decompiler repo root. Needs node and agent-browser; the tool
+self-drives a real headed browser via `bin/capture-browser`.
+
+For repair diagnosis, use a Codex multi-agent/subagent tool when one is available
+(discover it with `tool_search` if needed), launching one diagnosis worker per
+repair input. If no subagent tool is available in the session, run the same
+diagnosis prompt serially in the current agent and save the same output JSON
+files before applying repairs.
 
 ## The one rule that shapes everything: script measures, agent judges
 
@@ -79,7 +86,7 @@ reveals), `manifest.proposed.json` (the proposed capture manifest), and
   hover capture whose `root` is under that component). Write a filtered manifest:
 
   ```bash
-  node skill/scripts/filter-manifest.js \
+  node skill/codex/scripts/filter-manifest.js \
     --in <run>/manifest.proposed.json --out <run>/manifest.targeted.json \
     --ids "hero-load,hero-headline-reveal"      # or --grep "hero|headline"
   ```

@@ -24,8 +24,11 @@ full rationale, `docs/PART-5-repair-loop-design.md`.
 
 ## Phase A — diagnose, in parallel (no browser)
 
-For **every** repairable result, spawn one diagnosis subagent — all in a single
-batch so they run concurrently. Build each prompt from
+For **every** repairable result, spawn one diagnosis subagent if the Codex
+session has a multi-agent/subagent tool available. Use `tool_search` to discover
+one when needed, and run all diagnoses in parallel if the tool supports it. If no
+subagent tool is available, perform the same diagnosis step serially in the
+current agent. Build each prompt from
 `references/diagnosis-subagent.md`, filling:
 
 - `{INPUT_JSON_PATH}` → `<run>/<result.repairInput>`
@@ -42,7 +45,7 @@ file content.)
 For each repairable result, in order, if `budget > 0`:
 
 ```bash
-node skill/scripts/repair-step.js apply \
+node skill/codex/scripts/repair-step.js apply \
   --run <run> --manifest <manifest-you-captured-with> \
   --index <result index in R> --id <id> \
   --output <run>/repair/<id>.attempt-1.output.json --attempt 1
@@ -68,9 +71,10 @@ construction — but running two headed captures at once would still collide.)
 For each Phase-B verdict that is `unrepaired / measured / not converged`, and only
 if `attempt < maxRetries` and `budget > 0`:
 
-1. Spawn one more diagnosis subagent. Reuse the **same** attempt-1 input + screenshot
-   (the failed state is structurally unchanged), and append an attempt-history note
-   to the prompt, e.g.:
+1. Spawn one more diagnosis subagent if available, or run the same retry
+   diagnosis serially. Reuse the **same** attempt-1 input + screenshot (the
+   failed state is structurally unchanged), and append an attempt-history note to
+   the prompt, e.g.:
 
    > ATTEMPT HISTORY: attempt 1 used `<kind>` (`<params>`) and the engine measured
    > `<status>` (occludedBy: `<occludedBy>`); it did not converge. Do not repeat it
@@ -82,7 +86,7 @@ if `attempt < maxRetries` and `budget > 0`:
 2. Apply attempt 2:
 
    ```bash
-   node skill/scripts/repair-step.js apply \
+   node skill/codex/scripts/repair-step.js apply \
      --run <run> --manifest <manifest> --index <i> --id <id> \
      --output <run>/repair/<id>.attempt-2.output.json --attempt 2
    ```
@@ -93,7 +97,7 @@ if `attempt < maxRetries` and `budget > 0`:
      not converging. Stop and record an honest terminal:
 
      ```bash
-     node skill/scripts/repair-step.js terminal --run <run> --id <id> --attempt 2 \
+     node skill/codex/scripts/repair-step.js terminal --run <run> --id <id> --attempt 2 \
        --cause <genuinely_inert|needs_human> --diagnosis "repeated-identical; not converging"
      ```
 

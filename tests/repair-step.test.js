@@ -3,7 +3,7 @@
 /*
  * repair-step.js coverage — browser-free, model-free.
  *
- * Drives skill/scripts/repair-step.js as a subprocess with MOTION_DECOMPILE_BIN
+ * Drives skill/codex/scripts/repair-step.js as a subprocess with MOTION_DECOMPILE_BIN
  * pointed at a fake tool (tests/fixtures/fake-decompile-tool.js) that re-exports
  * the real helpers but fakes the ENGINE capture. Proves the deterministic bridge
  * matches the in-tool loop contract:
@@ -21,7 +21,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SCRIPT = path.join(__dirname, '..', 'skill', 'scripts', 'repair-step.js');
+const SCRIPT = path.join(__dirname, '..', 'skill', 'codex', 'scripts', 'repair-step.js');
 const FAKE = path.join(__dirname, 'fixtures', 'fake-decompile-tool.js');
 fs.chmodSync(FAKE, 0o755);
 

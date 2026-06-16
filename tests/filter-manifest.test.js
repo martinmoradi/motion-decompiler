@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SCRIPT = path.join(__dirname, '..', 'skill', 'scripts', 'filter-manifest.js');
+const SCRIPT = path.join(__dirname, '..', 'skill', 'codex', 'scripts', 'filter-manifest.js');
 let passed = 0;
 function ok(name, cond) { assert.ok(cond, name); passed += 1; }
 

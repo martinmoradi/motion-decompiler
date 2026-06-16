@@ -24,8 +24,8 @@ node --check "$ROOT/bin/calib-metrics" >/dev/null
 node --check "$ROOT/extension/capture-animation.js" >/dev/null
 node --check "$ROOT/tests/fixtures/repair-stub-provider.js" >/dev/null
 node --check "$ROOT/tests/fixtures/fake-decompile-tool.js" >/dev/null
-node --check "$ROOT/skill/scripts/repair-step.js" >/dev/null
-node --check "$ROOT/skill/scripts/filter-manifest.js" >/dev/null
+node --check "$ROOT/skill/codex/scripts/repair-step.js" >/dev/null
+node --check "$ROOT/skill/codex/scripts/filter-manifest.js" >/dev/null
 node "$ROOT/tests/decode-transform.test.js" >/dev/null
 node "$ROOT/tests/spec-shaping.test.js" >/dev/null
 # Capture-repair loop (Part 6) — browser-free, model-free: loop mechanics +

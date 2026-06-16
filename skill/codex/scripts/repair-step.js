@@ -39,12 +39,12 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 // ── Locate the repo + the tool (robust to being run from the repo or a symlink
-// into ~/.claude/skills; the skill is repo-bound and run from the repo root). ──
+// into ~/.codex/skills; the skill is repo-bound and run from the repo root). ──
 function findTool() {
   const candidates = [
     process.env.MOTION_DECOMPILE_BIN,
     path.join(process.cwd(), 'bin', 'motion-decompile'),
-    path.resolve(__dirname, '..', '..', 'bin', 'motion-decompile'),
+    path.resolve(__dirname, '..', '..', '..', 'bin', 'motion-decompile'),
   ].filter(Boolean);
   const found = candidates.find(p => { try { return fs.statSync(p).isFile(); } catch (e) { return false; } });
   if (!found) {

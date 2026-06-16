@@ -1,8 +1,8 @@
 # motion-decompiler — agent guide
 
 This file is for agents working **on** this repo. End users *decompiling a site*
-use the skill in `skill/` (read its `SKILL.md`); this guide is about the tool
-itself.
+use the Codex skill in `skill/codex/` (read its `SKILL.md`); this guide is about
+the tool itself.
 
 motion-decompiler captures what a web animation *actually does* (by sampling
 computed style per frame) and emits an **agent-ready spec, not code**. A coding
@@ -18,7 +18,8 @@ agent then writes the recreation from that spec.
 - `bin/capture-snippet.sh` + `install.sh` — the DevTools-snippet fallback path
   (clipboard the engine into Sources > Snippets) for when the extension can't be
   loaded.
-- `skill/` — the Codex skill that drives the full map→capture pipeline.
+- `skill/codex/` — the Codex skill that drives the full map→capture pipeline.
+- `skill/claude/` — the Claude-shaped copy kept for comparison and iteration.
 
 ## The engine API (`window.__cap`)
 
@@ -77,7 +78,7 @@ Codex-in-chrome MCP (capture); Codex = agent-browser + its in-app Chrome;
 minimal = one real browser (agent-browser `--auto-connect`/`--headed`, or
 CDP/Playwright headed) for both. The recipe and manifest schema are identical
 across drivers — only the adapter changes. Adapters live in
-`skill/references/drivers/`.
+`skill/codex/references/drivers/`.
 
 ## Working on the engine
 
