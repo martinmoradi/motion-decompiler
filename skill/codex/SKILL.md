@@ -116,34 +116,44 @@ repairable residual; everything else (other empties/errors, e.g. `pseudo_element
 ### 5. Repair the residual (the agentic stage)
 
 Only if there are captures with a `repairInput`. This is a **diagnose → apply →
-re-measure** loop that *you* drive; the engine still does all measuring. Read
-**`references/repair-loop.md`** for the exact loop (Phases A/B/C, the ceilings,
-how to call `repair-step.js`, how Phase C threads attempt history). In short:
+re-measure** loop. The coordinator owns state in
+`<run>/repair/loop-state.json`; do not track budget, retries, or
+repeated-identical handling in prose.
 
-- **Phase A — diagnose (queued parallel, no browser).** For each `repairInput`,
-  spawn one subagent with the prompt in **`references/diagnosis-subagent.md`**,
-  handing it that capture's `input.json` + screenshot if present. Use at most 6
-  workers at once; queue overflow in later batches or run serially. It returns
-  **strictly** the §3 output schema (a closed action enum + a machine-checkable
-  `successCriterion`, defaulting to `expect: moved`). It never proposes a
-  duration/easing/from-to. Pipe each final JSON message through:
-  `bun skill/codex/scripts/repair-step.js save-output --run <run> --id <id> --attempt 1`.
-  The helper validates it and writes
-  `<run>/repair/<id>.attempt-1.output.json`.
-- **Phase B — apply + re-measure (serial, headed).** For each diagnosis, run
-  `repair-step.js apply …`. It routes the output (terminal / low-confidence /
-  actionable), and for actionable repairs clones the capture and lets the **engine
-  re-measure** a fresh isolated single capture (M1 by construction). Status comes
-  only from the engine; success is machine-checked.
-- **Phase C — one retry.** For an actionable repair that didn't converge (and isn't
-  terminal / repeated-identical), spawn one more subagent with the attempt history,
-  pipe its final JSON through `save-output --attempt 2`, and apply again. Honor the ceilings:
-  `maxRetries=2`, `budget=min(2×repairableCount, 24)`, confidence floor `0.4`,
-  repeated-identical → honest terminal.
+```bash
+bun skill/codex/scripts/repair-loop.js init \
+  --run <run> --manifest <manifest-you-captured-with>
+bun skill/codex/scripts/repair-loop.js next-prompts --run <run>
+```
 
-`repair-step.js` writes the repair provenance (`origin`, `repair{}` block, terminal
-causes) straight into `capture-results.json` in the §6 schema, so the engine's
-status is never overridden — provenance only records *how* it was reached.
+For each prompt path printed by `next-prompts`, spawn one local Codex
+multi-agent/subagent worker when available (at most 6 at once), or run the same
+prompt serially in the current agent. Each worker returns strictly the §3 JSON
+output. Save each final JSON message through the coordinator:
+
+```bash
+printf '%s\n' "$SUBAGENT_FINAL_JSON" | \
+  bun skill/codex/scripts/repair-loop.js save-output \
+    --run <run> --id <id> --attempt <attempt>
+```
+
+Then apply everything that is ready:
+
+```bash
+bun skill/codex/scripts/repair-loop.js apply-ready --run <run>
+```
+
+Repeat `next-prompts` → subagent diagnosis → `save-output` → `apply-ready` until
+`next-prompts` returns no prompts and `summary` shows no pending work:
+
+```bash
+bun skill/codex/scripts/repair-loop.js summary --run <run>
+```
+
+`repair-loop.js` enforces `budget=min(2×repairableCount, 24)`,
+`maxRetries=2`, repeated-identical terminalization, and prompt batching. It
+delegates validation, repair application, re-measurement, and `capture-results`
+provenance to `repair-step.js`, so the engine's status is never overridden.
 
 ### 6. Assemble + report
 
@@ -187,7 +197,7 @@ from.
 ## Reference files
 
 - `references/repair-loop.md` — the skill-driven repair loop: routing, ceilings,
-  `repair-step.js` usage, Phase C retry, provenance.
+  `repair-loop.js` usage, retry state, terminalization, provenance.
 - `references/diagnosis-subagent.md` — the exact prompt + rules for each Phase A/C
   diagnosis subagent (the intelligence artifact).
 - `references/repair-contracts.md` — the §2 input, §3 output (action enum, success

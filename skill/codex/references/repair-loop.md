@@ -1,160 +1,117 @@
 # The skill-driven repair loop
 
-You (the agent running the skill) own this loop: which failures to diagnose, when
-to retry, when to stop. The **engine** still does every measurement — you only ever
-move selectors/state around and let it re-measure. This file is the exact
-procedure. Run it only when `capture --repair-dump` left captures with a
-`repairInput` field in `<run>/capture-results.json`.
+Run this only when `capture --repair-dump` left captures with a `repairInput`
+field in `<run>/capture-results.json`.
 
-Authoritative contracts: `references/repair-contracts.md` (§2/§3/§6) and, for the
-full rationale, `docs/PART-5-repair-loop-design.md`.
+The agent still supplies local subscription reasoning through Codex subagents,
+but `repair-loop.js` owns workflow state in `<run>/repair/loop-state.json`.
+Do not track budget, retries, pending captures, or repeated-identical handling
+manually in prose.
 
-## Setup
+Authoritative contracts: `references/repair-contracts.md` (§2/§3/§6) and, for
+the full rationale, `docs/PART-5-repair-loop-design.md`.
 
-1. Let `R` = the list of results in `capture-results.json` (in order). Each result's
-   **index** in `R` is also its index in the capture manifest you ran
-   (`manifest.proposed.json` or `manifest.targeted.json`) — the arrays are parallel.
-2. `repairable` = the results with a `repairInput`. If none, skip repair entirely.
-3. `budget = min(2 × repairable.length, 24)`. Spend **one** budget unit per apply
-   attempt (including a terminal or low-confidence attempt — diagnosis isn't free).
-   When `budget` hits 0, stop launching attempts; leave the rest as honest
-   first-try soft-fails and say so.
-4. `maxRetries = 2`, `confidenceFloor = 0.4` (these are enforced inside
-   `repair-step.js`; you enforce the budget, the retry count, and repeated-identical).
+## 1. Initialize coordinator state
 
-## Phase A — diagnose, queued parallel (no browser)
-
-For **every** repairable result, run one diagnosis prompt. Use a Codex
-multi-agent/subagent tool when available (`tool_search` can discover it), but
-keep at most **6 workers open at once**. If there are more than 6 repairable
-inputs, queue the overflow: wait for workers to finish, save their outputs, close
-them, then launch the next batch. If no subagent tool is available, perform the
-same diagnosis step serially in the current agent.
-
-Build each prompt from `references/diagnosis-subagent.md`, filling:
-
-- `{INPUT_JSON_PATH}` → `<run>/<result.repairInput>`
-- `{SCREENSHOT_PATH}` → `<run>/repair/<id>.attempt-1.png` (the input's `screenshot`
-  field). If the screenshot field is absent, or `<run>/<input.screenshot>` is not
-  readable, fill this with `Screenshot unavailable; reason from repairContext
-  alone.` Do **not** re-run capture just to recover a screenshot.
-
-When spawning Codex workers, use exactly one call shape:
-Use either `message` or `items`, never both:
-
-```js
-spawn_agent({ agent_type: "worker", message: "<filled diagnosis prompt>" })
-spawn_agent({
-  agent_type: "worker",
-  items: [{ type: "text", text: "<filled diagnosis prompt>" }]
-})
+```bash
+bun skill/codex/scripts/repair-loop.js init \
+  --run <run> --manifest <manifest-you-captured-with>
 ```
 
-Pipe each subagent's final message verbatim into the deterministic output helper:
+This reads `<run>/capture-results.json`, discovers repairable rows, snapshots
+their original `(status, cause, occludedBy)` triples, computes
+`budget=min(2×repairableCount, 24)`, and writes
+`<run>/repair/loop-state.json`.
+
+Use `--force` only when intentionally discarding an existing repair loop state.
+
+## 2. Generate diagnosis prompts
+
+```bash
+bun skill/codex/scripts/repair-loop.js next-prompts --run <run>
+```
+
+The command writes prompt files under `<run>/repair/` and prints the batch to run.
+It defaults to at most 6 prompts, matching the local subagent concurrency limit.
+Each prompt is filled from `references/diagnosis-subagent.md`.
+
+For attempt 1, the prompt points at the original
+`<run>/repair/<id>.attempt-1.input.json` written by `capture --repair-dump`.
+For attempt 2, the coordinator writes a derived
+`<run>/repair/<id>.attempt-2.input.json` with `attemptHistory`, reuses the
+screenshot, and appends a no-repeat retry note to the prompt.
+
+Spawn one local Codex worker per printed prompt when a subagent tool is
+available. If no subagent tool is available, run the same prompt serially in the
+current agent. The worker's entire final message must be the §3 JSON object.
+
+## 3. Save subagent outputs
+
+Pipe each worker's final JSON through the coordinator:
 
 ```bash
 printf '%s\n' "$SUBAGENT_FINAL_JSON" | \
-  bun skill/codex/scripts/repair-step.js save-output \
-    --run <run> --id <id> --attempt 1
+  bun skill/codex/scripts/repair-loop.js save-output \
+    --run <run> --id <id> --attempt <attempt>
 ```
 
-Subagents return raw JSON: no prose, no code fence, no transcript wrapper. The
-helper validates the §3 schema and writes
-`<run>/repair/<id>.attempt-1.output.json`; if it reports `valid:false`, treat that
-attempt as failed provider output and do not hand-edit the file.
+You can also use `--file <json>` for an output saved on disk.
 
-## Phase B — apply + re-measure, serial per site (headed)
+`save-output` keeps a raw copy, delegates schema validation to
+`repair-step.js save-output`, and records valid or invalid output in
+`loop-state.json`. Do not hand-edit rejected output files. Invalid output is
+still routed through `apply-ready`, where it spends one budget unit and becomes a
+safe `terminal_give_up(provider_error)` through `repair-step.js apply`.
 
-For each repairable result, in order, if `budget > 0`:
+## 4. Apply ready outputs
 
 ```bash
-bun skill/codex/scripts/repair-step.js apply \
-  --run <run> --manifest <manifest-you-captured-with> \
-  --index <result index in R> --id <id> \
-  --output <run>/repair/<id>.attempt-1.output.json --attempt 1
+bun skill/codex/scripts/repair-loop.js apply-ready --run <run>
 ```
 
-Decrement `budget`. The script routes the output and prints a one-line verdict JSON:
+This serially applies saved outputs while budget remains. It spends one budget
+unit per ready attempt, including terminal, low-confidence, invalid-provider,
+and actionable recapture attempts.
 
-- `outcome: "terminal"` → an honest STOP (provider-chosen give-up, invalid output,
-  or a sub-run failure). Recorded. Done with this capture.
-- `outcome: "unrepaired"`, `lowConfidence: true` → skipped a guess. Done.
-- `outcome: "ok-after-repair"`, `converged: true` → the **engine** re-measured and
-  it moved. Recorded with the repaired timeline promoted into the run. Done.
-- `outcome: "unrepaired"`, `measured: true`, `converged: false` → an actionable
-  repair that didn't converge → eligible for **one** retry (Phase C). Keep its
-  verdict (note its `resultTriple` and `occludedBy`).
+Actual repair application and re-measurement are delegated to
+`repair-step.js apply`. For actionable repairs, `repair-step.js` clones the
+capture, runs a fresh isolated single capture when required, asks the engine to
+measure, machine-checks success, promotes repaired timelines, and writes §6
+provenance into `capture-results.json`.
 
-This apply step is also the validation step for the subagent output: it reads the
-saved JSON, calls `validateRepairOutput`, and records a safe
-`terminal_give_up(provider_error)` if the file is unreadable or invalid. Never
-act on a diagnosis that has not gone through this command.
+If an actionable re-measure reproduces a triple already seen for that capture,
+the coordinator calls `repair-step.js terminal` automatically. It uses
+`genuinely_inert` when the diagnosis input says nothing nearby is animatable and
+the verdict has no occluder; otherwise it uses `needs_human`.
 
-Serial, not parallel: these drive the one real browser, and stateful repairs must
-not interleave. (Each apply is its own fresh isolated single capture — M1 holds by
-construction — but running two headed captures at once would still collide.)
+If attempt 1 fails with a distinct triple and budget remains, the record becomes
+eligible for an attempt 2 prompt. Never go past attempt 2.
 
-## Phase C — one retry for the unconverged actionable repairs
+## 5. Repeat until idle, then summarize
 
-For each Phase-B verdict that is `unrepaired / measured / not converged`, and only
-if `attempt < maxRetries` and `budget > 0`:
+Repeat:
 
-1. Spawn one more diagnosis subagent if available, using the same 6-worker queue
-   and the same `message`/`items` call-shape rule from Phase A. Otherwise run the
-   retry diagnosis serially. Reuse the **same** attempt-1 input + screenshot if it
-   exists (the failed state is structurally unchanged), and append an
-   attempt-history note to the prompt, e.g.:
+```bash
+bun skill/codex/scripts/repair-loop.js next-prompts --run <run>
+# run local subagents and save their final JSON
+bun skill/codex/scripts/repair-loop.js apply-ready --run <run>
+```
 
-   > ATTEMPT HISTORY: attempt 1 used `<kind>` (`<params>`) and the engine measured
-   > `<status>` (occludedBy: `<occludedBy>`); it did not converge. Do not repeat it
-   > unchanged — refine it (a different instance, an extra precondition step, a
-   > parent target), or give an honest `terminal_give_up` if nothing here animates.
+Stop when `next-prompts` prints no prompts and `summary` shows no pending or
+ready work:
 
-   Pipe the raw final JSON through `repair-step.js save-output --attempt 2`; it
-   writes `<run>/repair/<id>.attempt-2.output.json`.
+```bash
+bun skill/codex/scripts/repair-loop.js summary --run <run>
+```
 
-2. Apply attempt 2:
+Use the summary counts when reporting the run:
 
-   ```bash
-   bun skill/codex/scripts/repair-step.js apply \
-     --run <run> --manifest <manifest> --index <i> --id <id> \
-     --output <run>/repair/<id>.attempt-2.output.json --attempt 2
-   ```
-
-   Decrement `budget`. This validates attempt 2 through `validateRepairOutput`.
-   Read the verdict:
-   - `converged` → done (ok/check-after-repair).
-   - **repeated-identical**: the attempt-2 `resultTriple` equals attempt 1's → it's
-     not converging. Stop and record an honest terminal:
-
-     ```bash
-     bun skill/codex/scripts/repair-step.js terminal --run <run> --id <id> --attempt 2 \
-       --cause <genuinely_inert|needs_human> --diagnosis "repeated-identical; not converging"
-     ```
-
-     Choose `genuinely_inert` when the attempt-1 input's
-     `repairContext.animatableHere` is all false **and** the verdict has no
-     `occludedBy`; otherwise `needs_human`. (This mirrors the in-tool loop's
-     terminal labeling — termination is structural, the precise label is judgment.)
-   - distinct triple but attempt 2 was the last → leave as `unrepaired` (an honest
-     "the loop couldn't fix it", with the diagnosis attached for a human).
-
-Never go past attempt 2, and never re-run a capture whose outcome is already
-`terminal` or `ok-after-repair`.
-
-## After the loop
-
-`repair-step.js` has already written `origin` + the `repair{}` provenance block
-into `capture-results.json` (§6 schema), and promoted converged timelines into
-`<run>/timelines/`. Proceed to `assemble` + `report`. When you summarize for the
-user, split the count three ways and be honest:
-
-- **captured first-try** (`origin: first-try`, status ok/check),
-- **captured after-repair** (`origin: after-repair`, `repair.outcome:
-  ok-after-repair`) — name the winning action,
-- **honest terminal / unrepaired** (`repair.outcome: terminal | unrepaired`) — name
-  the terminal cause; this is the tool correctly saying "nothing to capture here"
-  or "this needs a human", not a silent empty.
+- **captured first-try**: `origin: first-try`, status `ok`/`check`
+- **captured after-repair**: `origin: after-repair`, `repair.outcome:
+  ok-after-repair`
+- **honest terminal / unrepaired**: `repair.outcome: terminal | unrepaired`
+- **pending / budget-exhausted**: coordinator state that still explains why no
+  repair was applied
 
 If you want the per-bucket repair tally the SCOREBOARD uses, run
 `./bin/calib-metrics <run> --site <slug>` and read `metrics.repair`.
@@ -162,7 +119,8 @@ If you want the per-bucket repair tally the SCOREBOARD uses, run
 ## The invariant, restated for this loop
 
 Status, findings, durations, easings, and from/to values in the final spec come
-**only** from the engine's re-measure. The subagent named a selector or an action;
-`repair-step.js` applied it and asked the engine. If a "repaired" capture shows a
-number, that number was sampled by the engine after the repair — never asserted by
-the model. That is the whole point.
+only from the engine's re-measure. The subagent names a selector, state action,
+or terminal verdict. `repair-loop.js` tracks local workflow state.
+`repair-step.js` applies the action and asks the engine. If a repaired capture
+shows a measured number, that number was sampled by the engine after the repair,
+never asserted by the model.
