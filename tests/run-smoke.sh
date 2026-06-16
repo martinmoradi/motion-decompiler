@@ -706,7 +706,7 @@ JSON
 cat >"$REPAIR_REPORT_DIR/capture-results.json" <<'JSON'
 {
   "capturedAt": "2026-06-15T00:00:00.000Z",
-  "count": 4,
+  "count": 5,
   "results": [
     {
       "id": "plain-empty",
@@ -732,6 +732,25 @@ cat >"$REPAIR_REPORT_DIR/capture-results.json" <<'JSON'
           { "action": "retarget_selector", "params": { "selector": ".visible-card" }, "confidence": 0.8, "resultStatus": "ok", "resultCause": null }
         ],
         "winningAction": "retarget_selector",
+        "outcome": "ok-after-repair",
+        "terminalCause": null
+      }
+    },
+    {
+      "id": "repair-check",
+      "type": "scroll",
+      "status": "check",
+      "summary": "Scroll reveal moved but needs verification.",
+      "findings": 1,
+      "timelineRef": "timelines/repair-check.json",
+      "origin": "after-repair",
+      "repair": {
+        "attempted": true,
+        "failureCause": "hidden_not_visible",
+        "attempts": [
+          { "action": "scroll_into_view", "params": { "selector": ".section-title" }, "confidence": 0.7, "resultStatus": "check", "resultCause": null }
+        ],
+        "winningAction": "scroll_into_view",
         "outcome": "ok-after-repair",
         "terminalCause": null
       }
@@ -780,6 +799,10 @@ cat >"$REPAIR_REPORT_DIR/capture-results.json" <<'JSON'
 }
 JSON
 "$ROOT/bin/yoinkit" report "$REPAIR_REPORT_DIR" >/dev/null
+grep -q '^## Human scoreboard' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'usable first_try: 0 (ok=0, check=0)' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'usable after_repair: 2 (ok=1, check=1)' "$REPAIR_REPORT_DIR/report.md"
+grep -q 'status totals: ok=1, check=1, empty=2, error=1, skipped=0' "$REPAIR_REPORT_DIR/report.md"
 grep -q '^## First-try' "$REPAIR_REPORT_DIR/report.md"
 grep -q '^## After-repair' "$REPAIR_REPORT_DIR/report.md"
 grep -q 'winningAction: retarget_selector' "$REPAIR_REPORT_DIR/report.md"

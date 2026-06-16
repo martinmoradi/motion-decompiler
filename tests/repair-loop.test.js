@@ -296,18 +296,25 @@ function ok(name, cond) {
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repair-metrics-'));
   fs.writeFileSync(path.join(dir, 'capture-results.json'), JSON.stringify({
-    capturedAt: '2026-06-15T00:00:00.000Z', count: 2, results: [
+    capturedAt: '2026-06-15T00:00:00.000Z', count: 3, results: [
       { id: 'win', type: 'hover', status: 'ok', origin: 'after-repair', findings: 2,
         repair: { attempted: true, failureCause: 'occlusion', attempts: [{ action: 'precondition_action' }], winningAction: 'precondition_action', outcome: 'ok-after-repair', terminalCause: null } },
+      { id: 'check-win', type: 'scroll', status: 'check', origin: 'after-repair', findings: 1,
+        repair: { attempted: true, failureCause: 'hidden_not_visible', attempts: [{ action: 'scroll_into_view' }], winningAction: 'scroll_into_view', outcome: 'ok-after-repair', terminalCause: null } },
       { id: 'stop', type: 'hover', status: 'empty', origin: 'first-try', cause: 'inert_representative', findings: 0,
         repair: { attempted: true, failureCause: 'inert_representative', attempts: [{ action: 'terminal_give_up' }], winningAction: null, outcome: 'terminal', terminalCause: 'genuinely_inert' } },
     ],
   }));
   const r = require('child_process').spawnSync('node', [path.join(__dirname, '..', 'bin', 'calib-metrics'), dir, '--site', 'm'], { encoding: 'utf8' });
   const metrics = JSON.parse(fs.readFileSync(path.join(dir, 'metrics.json'), 'utf8'));
+  ok('metrics: command succeeded', r.status === 0);
   ok('metrics: win bucketed under occlusion (not "other")', metrics.repair.by_bucket.occlusion && metrics.repair.by_bucket.occlusion.ok === 1);
+  ok('metrics: repaired check bucketed under hidden_not_visible', metrics.repair.by_bucket.hidden_not_visible && metrics.repair.by_bucket.hidden_not_visible.ok === 1);
   ok('metrics: no spurious "other" bucket', !metrics.repair.by_bucket.other);
   ok('metrics: ok_after_repair split', metrics.captures.ok_after_repair === 1 && metrics.captures.ok_first_try === 0);
+  ok('metrics: check_after_repair split', metrics.captures.check_after_repair === 1 && metrics.captures.check_first_try === 0);
+  ok('metrics stdout: canonical usable scoreboard', r.stdout.includes('usable scoreboard: first_try=0 (ok=0 check=0); after_repair=2 (ok=1 check=1)'));
+  ok('metrics stdout: no old ok/check repair split line', !r.stdout.includes('  ok: first_try='));
   fs.rmSync(dir, { recursive: true, force: true });
 }
 

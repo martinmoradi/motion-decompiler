@@ -3513,6 +3513,21 @@ function buildReport(runDir) {
     const status = captureStatus(result, timeline);
     return { result, timeline, moved, status, bucket: repairBucket(result) };
   });
+  const skipped = (manifest.captures || []).filter(capture => capture.skip || capture.enabled === false);
+  const statusCounts = { ok: 0, check: 0, empty: 0, error: 0, skipped: 0 };
+  for (const entry of entries) {
+    if (Object.prototype.hasOwnProperty.call(statusCounts, entry.status)) statusCounts[entry.status] += 1;
+  }
+  statusCounts.skipped = Math.max(statusCounts.skipped, skipped.length);
+  const bucketStatusCount = (bucket, status) => entries
+    .filter(entry => entry.bucket === bucket && entry.status === status)
+    .length;
+  const firstTryOk = bucketStatusCount('first-try', 'ok');
+  const firstTryCheck = bucketStatusCount('first-try', 'check');
+  const afterRepairOk = bucketStatusCount('after-repair', 'ok');
+  const afterRepairCheck = bucketStatusCount('after-repair', 'check');
+  const usableFirstTry = firstTryOk + firstTryCheck;
+  const usableAfterRepair = afterRepairOk + afterRepairCheck;
   const rows = entries.map(entry => {
     const { result, timeline, moved, status } = entry;
     return tableRow([
@@ -3620,6 +3635,13 @@ function buildReport(runDir) {
   }
   lines.push('');
 
+  lines.push('## Human scoreboard');
+  lines.push('');
+  lines.push(`- usable first_try: ${usableFirstTry} (ok=${firstTryOk}, check=${firstTryCheck})`);
+  lines.push(`- usable after_repair: ${usableAfterRepair} (ok=${afterRepairOk}, check=${afterRepairCheck})`);
+  lines.push(`- status totals: ok=${statusCounts.ok}, check=${statusCounts.check}, empty=${statusCounts.empty}, error=${statusCounts.error}, skipped=${statusCounts.skipped}`);
+  lines.push('');
+
   lines.push('## First-try');
   lines.push('');
   if (firstTryRows.length) lines.push(...firstTryRows);
@@ -3658,7 +3680,6 @@ function buildReport(runDir) {
     lines.push('');
   }
 
-  const skipped = (manifest.captures || []).filter(capture => capture.skip || capture.enabled === false);
   if (skipped.length) {
     lines.push('## Skipped');
     lines.push('');
