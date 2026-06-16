@@ -14,8 +14,10 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SCHEMA_VERSION = 1;
-const DEFAULT_BATCH_SIZE = 6;
+const SCHEMA_VERSION = 2;
+const DEFAULT_WORKER_LIMIT = 6;
+const DEFAULT_WAVE_SIZE = 10;
+const DEFAULT_CAPTURES_PER_PROMPT = 3;
 const SCRIPT_DIR = __dirname;
 const REPAIR_STEP = path.join(SCRIPT_DIR, 'repair-step.js');
 const PROMPT_TEMPLATE = path.resolve(SCRIPT_DIR, '..', 'references', 'diagnosis-subagent.md');
@@ -133,8 +135,12 @@ function safePathPart(value) {
   return String(value || 'capture').replace(/[^a-zA-Z0-9._-]+/g, '-');
 }
 
-function promptRelPath(id, attemptNo) {
-  return path.join('repair', `${safePathPart(id)}.attempt-${attemptNo}.prompt.md`);
+function batchPromptRelPath(batchId) {
+  return path.join('repair', `${safePathPart(batchId)}.prompt.md`);
+}
+
+function batchInputRelPath(batchId) {
+  return path.join('repair', `${safePathPart(batchId)}.input.json`);
 }
 
 function retryInputRelPath(id, attemptNo) {
@@ -143,6 +149,14 @@ function retryInputRelPath(id, attemptNo) {
 
 function rawOutputRelPath(id, attemptNo) {
   return path.join('repair', `${safePathPart(id)}.attempt-${attemptNo}.raw-output.json`);
+}
+
+function batchRawOutputRelPath(batchId) {
+  return path.join('repair', `${safePathPart(batchId)}.raw-output.json`);
+}
+
+function hypothesisOutputRelPath(id, attemptNo, role) {
+  return path.join('repair', `${safePathPart(id)}.attempt-${attemptNo}.${safePathPart(role)}.output.json`);
 }
 
 function existingScreenshot(runDir, input) {
@@ -189,17 +203,18 @@ function historyNote(record) {
   ].join('\n');
 }
 
-function buildPrompt(runDir, inputRel, record, attemptNo) {
+function buildBatchPrompt(runDir, inputRel, captures) {
   const inputAbs = resolveRunPath(runDir, inputRel);
-  const input = readJson(inputAbs);
-  const screenshot = existingScreenshot(runDir, input);
-  let prompt = fs.readFileSync(PROMPT_TEMPLATE, 'utf8')
+  const list = captures.map(c => `- ${c.id} attempt ${c.attempt}: ${c.input}`).join('\n');
+  const history = captures
+    .map(c => c.context && c.context.retryInstruction)
+    .filter(Boolean)
+    .join('\n\n');
+  return fs.readFileSync(PROMPT_TEMPLATE, 'utf8')
+    .replace(/\{BATCH_INPUT_JSON_PATH\}/g, inputAbs)
     .replace(/\{INPUT_JSON_PATH\}/g, inputAbs)
-    .replace(/\{SCREENSHOT_PATH\}/g, screenshot);
-  if (attemptNo > 1) {
-    prompt += `\n\n---\n\n## Retry Instruction\n\n${historyNote(record)}\n`;
-  }
-  return prompt;
+    .replace(/\{SCREENSHOT_PATH\}/g, 'See each capture.screenshot in the batch input JSON.')
+    .concat(`\n\n---\n\n## Batch Contents\n\n${list}\n${history ? `\n\n---\n\n## Retry Instructions\n\n${history}\n` : ''}`);
 }
 
 function writeRetryInput(runDir, record, attemptNo) {
@@ -223,6 +238,7 @@ function parseLastJson(stdout) {
 function runStep(sub, args, input) {
   const argv = [REPAIR_STEP, sub];
   for (const [key, value] of Object.entries(args)) {
+    if (value === undefined || value === null) continue;
     argv.push(`--${key}`);
     if (value !== true) argv.push(String(value));
   }
@@ -237,6 +253,57 @@ function runStep(sub, args, input) {
     stdout: res.stdout || '',
     stderr: res.stderr || '',
     verdict: parseLastJson(res.stdout),
+  };
+}
+
+function validateRepairObject(tool, output) {
+  if (tool && typeof tool.validateRepairOutput === 'function') return tool.validateRepairOutput(output);
+  return { valid: false, error: 'repair validation helper unavailable' };
+}
+
+function fillAttemptFromOutput(runDir, attempt, outputRel, role, validated) {
+  attempt.validatedOutputPath = outputRel;
+  attempt.valid = true;
+  attempt.hypothesisRole = role;
+  attempt.kind = validated.repair.action.kind;
+  attempt.confidence = validated.repair.confidence;
+  attempt.action = outputRel ? readJson(resolveRunPath(runDir, outputRel)).action || null : null;
+  attempt.successCriterion = validated.repair.successCriterion || null;
+  attempt.diagnosis = validated.repair.diagnosis || null;
+}
+
+function saveHypothesisOutput(runDir, id, attemptNo, role, output) {
+  const rel = hypothesisOutputRelPath(id, attemptNo, role);
+  writeJson(resolveRunPath(runDir, rel), output);
+  return rel;
+}
+
+function terminalFromOutput(output, validated, outputRel, role, batchId) {
+  return {
+    role,
+    batchId,
+    outputPath: outputRel,
+    valid: true,
+    action: output.action || null,
+    confidence: validated.repair.confidence,
+    diagnosis: validated.repair.diagnosis || null,
+  };
+}
+
+function queueItemFromOutput(runDir, id, attemptNo, role, output, validated, outputRel, batchId, inputPath, promptPath) {
+  return {
+    role,
+    batchId,
+    attempt: attemptNo,
+    inputPath,
+    promptPath,
+    outputPath: outputRel,
+    valid: true,
+    kind: validated.repair.action.kind,
+    confidence: validated.repair.confidence,
+    action: output.action || null,
+    successCriterion: validated.repair.successCriterion || null,
+    diagnosis: validated.repair.diagnosis || null,
   };
 }
 
@@ -284,9 +351,14 @@ function cmdInit(args, tool) {
       maxRetries: defaults.maxRetries,
       confidenceFloor: defaults.confidenceFloor,
       budgetTotal,
-      promptBatchSize: DEFAULT_BATCH_SIZE,
+      promptBatchSize: DEFAULT_WORKER_LIMIT,
+      promptWorkerLimit: DEFAULT_WORKER_LIMIT,
+      promptWaveSize: DEFAULT_WAVE_SIZE,
+      capturesPerPrompt: DEFAULT_CAPTURES_PER_PROMPT,
     },
     budgetSpent: 0,
+    nextBatchNo: 1,
+    batches: [],
     records,
   };
   saveState(runDir, state);
@@ -302,12 +374,16 @@ function nextAttemptFor(record, state) {
 function cmdNextPrompts(args) {
   const runDir = path.resolve(req(args, 'run'));
   const state = loadState(runDir);
-  const limit = Number(args.limit || state.limits.promptBatchSize || DEFAULT_BATCH_SIZE);
-  const prompts = [];
+  const workerLimit = Math.max(1, Number(args.limit || state.limits.promptWorkerLimit || state.limits.promptBatchSize || DEFAULT_WORKER_LIMIT));
+  const waveSize = Math.max(1, Number(args.waveSize || state.limits.promptWaveSize || DEFAULT_WAVE_SIZE));
+  const capturesPerPrompt = Math.max(1, Number(args.capturesPerPrompt || state.limits.capturesPerPrompt || DEFAULT_CAPTURES_PER_PROMPT));
+  const captureLimit = Math.min(waveSize, workerLimit * capturesPerPrompt);
+  const selected = [];
+  const batches = [];
   const budgetRemaining = Math.max(0, state.limits.budgetTotal - state.budgetSpent);
 
   for (const record of state.records || []) {
-    if (prompts.length >= limit) break;
+    if (selected.length >= captureLimit) break;
     const attemptNo = nextAttemptFor(record, state);
     if (!attemptNo) continue;
     if (attemptNo > state.limits.maxRetries) {
@@ -323,28 +399,80 @@ function cmdNextPrompts(args) {
     if (attempt.rawOutputPath || attempt.validatedOutputPath || attempt.appliedAt) continue;
 
     const inputRel = attemptNo === 1 ? record.repairInput : writeRetryInput(runDir, record, attemptNo);
-    const promptRel = promptRelPath(record.id, attemptNo);
-    const promptAbs = resolveRunPath(runDir, promptRel);
-    writeText(promptAbs, buildPrompt(runDir, inputRel, record, attemptNo));
+    const inputAbs = resolveRunPath(runDir, inputRel);
+    const input = readJson(inputAbs);
+    selected.push({
+      record,
+      attempt,
+      attemptNo,
+      inputRel,
+      inputAbs,
+      screenshot: existingScreenshot(runDir, input),
+      context: input,
+    });
+  }
 
-    attempt.inputPath = inputRel;
-    attempt.promptPath = promptRel;
-    attempt.promptedAt = new Date().toISOString();
-    record.state = 'waiting-output';
-    record.nextAttempt = attemptNo;
-    prompts.push({ id: record.id, attempt: attemptNo, prompt: promptAbs, input: resolveRunPath(runDir, inputRel) });
+  state.batches = state.batches || [];
+  state.nextBatchNo = state.nextBatchNo || 1;
+  for (let i = 0; i < selected.length; i += capturesPerPrompt) {
+    const group = selected.slice(i, i + capturesPerPrompt);
+    const batchId = `batch-${state.nextBatchNo++}`;
+    const batchInputRel = batchInputRelPath(batchId);
+    const batchPromptRel = batchPromptRelPath(batchId);
+    const captures = group.map(({ record, attemptNo, inputRel, inputAbs, screenshot, context }) => ({
+      id: record.id,
+      captureId: record.id,
+      attempt: attemptNo,
+      input: inputAbs,
+      inputPath: inputRel,
+      screenshot,
+      context,
+    }));
+    writeJson(resolveRunPath(runDir, batchInputRel), {
+      batchId,
+      captures,
+      outputContract: 'Return a JSON array with one item per captureId. Each item contains captureId, primary, fallback, and terminal hypotheses.',
+    });
+    writeText(resolveRunPath(runDir, batchPromptRel), buildBatchPrompt(runDir, batchInputRel, captures));
+
+    const now = new Date().toISOString();
+    for (const item of group) {
+      item.attempt.inputPath = item.inputRel;
+      item.attempt.promptPath = batchPromptRel;
+      item.attempt.batchId = batchId;
+      item.attempt.promptedAt = now;
+      item.record.state = 'waiting-output';
+      item.record.nextAttempt = item.attemptNo;
+    }
+
+    const batch = {
+      batchId,
+      promptPath: batchPromptRel,
+      inputPath: batchInputRel,
+      createdAt: now,
+      captures: captures.map(c => ({ id: c.id, attempt: c.attempt, inputPath: c.inputPath, screenshot: c.screenshot })),
+    };
+    state.batches.push(batch);
+    batches.push({
+      batchId,
+      prompt: resolveRunPath(runDir, batchPromptRel),
+      input: resolveRunPath(runDir, batchInputRel),
+      captures: captures.map(c => ({ id: c.id, attempt: c.attempt, input: c.input, screenshot: c.screenshot })),
+    });
   }
 
   saveState(runDir, state);
   emit({
-    prompts: prompts.length,
-    batchLimit: limit,
+    prompts: batches.length,
+    batchLimit: workerLimit,
+    captureLimit,
+    capturesPerPrompt,
     budgetRemaining,
-    items: prompts,
+    items: batches,
   });
 }
 
-function cmdSaveOutput(args) {
+function cmdSaveSingleOutput(args) {
   const runDir = path.resolve(req(args, 'run'));
   const id = String(req(args, 'id'));
   const attemptNo = Number(req(args, 'attempt'));
@@ -397,6 +525,136 @@ function cmdSaveOutput(args) {
   });
 }
 
+function markBatchCaptureProviderError(record, attempt, rawRel, error, batchId) {
+  attempt.rawOutputPath = rawRel;
+  attempt.batchId = batchId;
+  attempt.outputSavedAt = new Date().toISOString();
+  attempt.valid = false;
+  attempt.validationError = error;
+  attempt.saveOutputVerdict = { saved: false, valid: false, error };
+  record.state = 'ready';
+  record.nextAttempt = attempt.attempt;
+}
+
+function cmdSaveBatchOutput(args, tool) {
+  const runDir = path.resolve(req(args, 'run'));
+  const batchId = String(req(args, 'batch'));
+  const state = loadState(runDir);
+  const batch = (state.batches || []).find(b => b.batchId === batchId);
+  if (!batch) fail(`no prompt batch with id "${batchId}"`);
+
+  const raw = args.file
+    ? fs.readFileSync(path.resolve(String(args.file)), 'utf8')
+    : fs.readFileSync(0, 'utf8');
+  const rawRel = batchRawOutputRelPath(batchId);
+  writeText(resolveRunPath(runDir, rawRel), raw);
+
+  let parsed = null;
+  let parseError = null;
+  try { parsed = JSON.parse(raw); }
+  catch (e) { parseError = `invalid JSON on stdin: ${e.message}`; }
+  if (parsed && !Array.isArray(parsed)) parseError = 'batch output must be a JSON array';
+
+  const byId = new Map();
+  if (!parseError) {
+    for (const item of parsed) {
+      if (item && item.captureId != null) byId.set(String(item.captureId), item);
+    }
+  }
+
+  const items = [];
+  for (const capture of batch.captures || []) {
+    const record = recordById(state, capture.id);
+    const attempt = attemptByNumber(record, Number(capture.attempt), true);
+    if (attempt.appliedAt) fail(`${record.id} attempt ${attempt.attempt} has already been applied`);
+    attempt.rawOutputPath = rawRel;
+    attempt.outputSavedAt = new Date().toISOString();
+    attempt.batchId = batchId;
+    attempt.hypothesisValidation = {};
+    record.hypothesisQueue = record.hypothesisQueue || [];
+
+    const item = byId.get(record.id);
+    if (parseError || !item) {
+      const error = parseError || `batch output missing captureId ${record.id}`;
+      markBatchCaptureProviderError(record, attempt, rawRel, error, batchId);
+      items.push({ id: record.id, attempt: attempt.attempt, saved: false, ready: true, error });
+      continue;
+    }
+
+    const primary = validateRepairObject(tool, item.primary);
+    attempt.hypothesisValidation.primary = primary.valid ? { valid: true } : { valid: false, error: primary.error };
+    if (!primary.valid) {
+      markBatchCaptureProviderError(record, attempt, rawRel, primary.error || 'invalid primary hypothesis', batchId);
+      items.push({ id: record.id, attempt: attempt.attempt, saved: false, ready: true, error: attempt.validationError });
+      continue;
+    }
+
+    const primaryRel = saveHypothesisOutput(runDir, record.id, attempt.attempt, 'primary', item.primary);
+    fillAttemptFromOutput(runDir, attempt, primaryRel, 'primary', primary);
+
+    record.hypothesisQueue = [];
+    let fallbackQueued = false;
+    let terminalQueued = false;
+    let fallbackError = null;
+    let terminalError = null;
+
+    if (item.fallback != null && attempt.attempt < state.limits.maxRetries) {
+      const fallback = validateRepairObject(tool, item.fallback);
+      attempt.hypothesisValidation.fallback = fallback.valid ? { valid: true } : { valid: false, error: fallback.error };
+      if (fallback.valid && fallback.repair.action.kind !== 'terminal_give_up') {
+        const fallbackAttempt = attempt.attempt + 1;
+        const fallbackRel = saveHypothesisOutput(runDir, record.id, fallbackAttempt, 'fallback', item.fallback);
+        record.hypothesisQueue.push(queueItemFromOutput(runDir, record.id, fallbackAttempt, 'fallback', item.fallback, fallback, fallbackRel, batchId, attempt.inputPath, attempt.promptPath));
+        fallbackQueued = true;
+      } else {
+        fallbackError = fallback.valid ? 'fallback must be actionable, not terminal_give_up' : fallback.error;
+      }
+    }
+
+    if (item.terminal != null) {
+      const terminal = validateRepairObject(tool, item.terminal);
+      attempt.hypothesisValidation.terminal = terminal.valid ? { valid: true } : { valid: false, error: terminal.error };
+      if (terminal.valid && terminal.repair.action.kind === 'terminal_give_up') {
+        const terminalRel = saveHypothesisOutput(runDir, record.id, attempt.attempt, 'terminal', item.terminal);
+        record.terminalHypothesis = terminalFromOutput(item.terminal, terminal, terminalRel, 'terminal', batchId);
+        terminalQueued = true;
+      } else {
+        terminalError = terminal.valid ? 'terminal must use terminal_give_up' : terminal.error;
+      }
+    }
+
+    record.state = 'ready';
+    record.nextAttempt = attempt.attempt;
+    items.push({
+      id: record.id,
+      attempt: attempt.attempt,
+      saved: true,
+      ready: true,
+      output: resolveRunPath(runDir, primaryRel),
+      fallbackQueued,
+      terminalQueued,
+      fallbackError,
+      terminalError,
+    });
+  }
+
+  batch.rawOutputPath = rawRel;
+  batch.outputSavedAt = new Date().toISOString();
+  saveState(runDir, state);
+  emit({
+    saved: items.filter(item => item.saved).length,
+    ready: items.length,
+    batch: batchId,
+    rawOutput: resolveRunPath(runDir, rawRel),
+    items,
+  });
+}
+
+function cmdSaveOutput(args, tool) {
+  if (args.batch) return cmdSaveBatchOutput(args, tool);
+  return cmdSaveSingleOutput(args);
+}
+
 function hasAnimatableHere(input) {
   const anim = input && input.repairContext && input.repairContext.animatableHere;
   return Boolean(anim && (anim.selfHover || anim.pseudoHover || anim.childAnimated || anim.scrollTriggerBound));
@@ -413,6 +671,52 @@ function latestReadyAttempt(record) {
   return (record.attempts || [])
     .filter(a => !a.appliedAt && (a.validatedOutputPath || a.rawOutputPath))
     .sort((a, b) => a.attempt - b.attempt)[0] || null;
+}
+
+function queueNextHypothesis(record, attempt, state) {
+  const queue = record.hypothesisQueue || [];
+  const next = queue.shift();
+  record.hypothesisQueue = queue;
+  if (!next) return null;
+  if (next.attempt > state.limits.maxRetries) return null;
+  const nextAttempt = attemptByNumber(record, next.attempt, true);
+  if (nextAttempt.appliedAt) return null;
+  nextAttempt.inputPath = next.inputPath || attempt.inputPath;
+  nextAttempt.promptPath = next.promptPath || attempt.promptPath;
+  nextAttempt.batchId = next.batchId || attempt.batchId || null;
+  nextAttempt.validatedOutputPath = next.outputPath;
+  nextAttempt.valid = true;
+  nextAttempt.hypothesisRole = next.role || 'fallback';
+  nextAttempt.kind = next.kind;
+  nextAttempt.confidence = next.confidence;
+  nextAttempt.action = next.action || null;
+  nextAttempt.successCriterion = next.successCriterion || null;
+  nextAttempt.diagnosis = next.diagnosis || null;
+  nextAttempt.outputSavedAt = new Date().toISOString();
+  record.state = 'ready';
+  record.nextAttempt = nextAttempt.attempt;
+  return nextAttempt;
+}
+
+function terminalizeFromHypothesis(runDir, record, attempt, reason) {
+  const terminal = record.terminalHypothesis;
+  if (!terminal || !terminal.valid || !terminal.action || terminal.action.kind !== 'terminal_give_up') return null;
+  const args = {
+    run: runDir,
+    id: record.id,
+    attempt: attempt.attempt,
+    cause: terminal.action.terminalCause || 'needs_human',
+    diagnosis: terminal.diagnosis || terminal.action.rationale || `ranked terminal after ${reason}`,
+  };
+  if (terminal.confidence != null) args.confidence = terminal.confidence;
+  const term = runStep('terminal', args);
+  if (term.status !== 0 || !term.verdict) fail(`terminalizing ${record.id} failed: ${term.stderr || term.stdout}`);
+  terminal.appliedAt = new Date().toISOString();
+  attempt.terminalization = { reason: 'ranked-terminal', cause: term.verdict.terminalCause, verdict: term.verdict };
+  record.state = 'terminal';
+  record.terminalCause = term.verdict.terminalCause || null;
+  record.completedAt = terminal.appliedAt;
+  return term.verdict;
 }
 
 function finalizeRecordAfterVerdict(runDir, state, record, attempt, verdict) {
@@ -435,12 +739,20 @@ function finalizeRecordAfterVerdict(runDir, state, record, attempt, verdict) {
   }
 
   if (verdict.lowConfidence) {
+    const queued = queueNextHypothesis(record, attempt, state);
+    if (queued) return { queuedHypothesis: queued };
+    const terminalVerdict = terminalizeFromHypothesis(runDir, record, attempt, 'low-confidence primary');
+    if (terminalVerdict) return terminalVerdict;
     record.state = 'unrepaired';
     record.completedAt = attempt.appliedAt;
     return null;
   }
 
   if (verdict.measured && verdict.converged === false && verdict.resultTriple) {
+    const queued = queueNextHypothesis(record, attempt, state);
+    if (queued) return { queuedHypothesis: queued };
+    const terminalVerdict = terminalizeFromHypothesis(runDir, record, attempt, 'failed ranked hypotheses');
+    if (terminalVerdict) return terminalVerdict;
     if ((record.seenTriples || []).includes(verdict.resultTriple)) {
       const cause = duplicateTerminalCause(runDir, attempt, verdict);
       const term = runStep('terminal', {
@@ -469,6 +781,10 @@ function finalizeRecordAfterVerdict(runDir, state, record, attempt, verdict) {
     return null;
   }
 
+  const queued = queueNextHypothesis(record, attempt, state);
+  if (queued) return { queuedHypothesis: queued };
+  const terminalVerdict = terminalizeFromHypothesis(runDir, record, attempt, 'unrepaired hypothesis');
+  if (terminalVerdict) return terminalVerdict;
   record.state = 'unrepaired';
   record.completedAt = attempt.appliedAt;
   return null;
@@ -509,12 +825,15 @@ function cmdApplyReady(args) {
       fail(`applying ${record.id} attempt ${attempt.attempt} failed: ${attempt.applyError}`);
     }
 
-    const terminalVerdict = finalizeRecordAfterVerdict(runDir, state, record, attempt, res.verdict);
+    const followup = finalizeRecordAfterVerdict(runDir, state, record, attempt, res.verdict);
+    const queuedHypothesis = followup && followup.queuedHypothesis ? followup.queuedHypothesis : null;
+    const terminalVerdict = followup && followup.queuedHypothesis ? null : followup;
     applied.push({
       id: record.id,
       attempt: attempt.attempt,
       verdict: res.verdict,
       terminalized: terminalVerdict || null,
+      queuedHypothesis: queuedHypothesis ? { attempt: queuedHypothesis.attempt, role: queuedHypothesis.hypothesisRole || null } : null,
       state: record.state,
     });
   }
@@ -597,7 +916,7 @@ function main() {
   const tool = loadTool();
   if (sub === 'init') cmdInit(args, tool);
   else if (sub === 'next-prompts') cmdNextPrompts(args);
-  else if (sub === 'save-output') cmdSaveOutput(args);
+  else if (sub === 'save-output') cmdSaveOutput(args, tool);
   else if (sub === 'apply-ready') cmdApplyReady(args);
   else if (sub === 'summary') cmdSummary(args);
   else fail(`unknown subcommand "${sub}" (use: init | next-prompts | save-output | apply-ready | summary)`);
