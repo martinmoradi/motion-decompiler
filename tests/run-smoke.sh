@@ -33,14 +33,20 @@ bun build \
   --target=bun --outdir "$BUN_CHECK_DIR" >/dev/null
 rm -rf "$BUN_CHECK_DIR"
 BUN_CHECK_DIR=""
-bun "$ROOT/tests/decode-transform.test.js" >/dev/null
-bun "$ROOT/tests/spec-shaping.test.js" >/dev/null
+unit_tests=(
+  "$ROOT/tests/decode-transform.test.js"
+  "$ROOT/tests/spec-shaping.test.js"
+  "$ROOT/tests/repair-loop.test.js"
+  "$ROOT/tests/repair-step.test.js"
+  "$ROOT/tests/filter-manifest.test.js"
+)
+if ! bun test "${unit_tests[@]}" >/dev/null 2>&1; then
+  bun test "${unit_tests[@]}"
+  exit 1
+fi
 # Capture-repair loop (Part 6) — browser-free, model-free: loop mechanics +
 # the external-command provider transport against the deterministic stub.
-bun "$ROOT/tests/repair-loop.test.js" >/dev/null
 # repair-step.js apply/terminal bridge + filter-manifest selection (browser-free).
-bun "$ROOT/tests/repair-step.test.js" >/dev/null
-bun "$ROOT/tests/filter-manifest.test.js" >/dev/null
 "$ROOT/bin/yoinkit" --help | grep -q 'scout <url>'
 "$ROOT/bin/yoinkit" --help | grep -q 'yoink <run-dir>'
 
