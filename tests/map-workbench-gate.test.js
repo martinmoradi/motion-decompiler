@@ -451,6 +451,60 @@ test('yoinkit map-gate --approve blocks uninspected required Motion Scout discov
   ]));
 });
 
+test('yoinkit map-gate --approve blocks when Motion Scout emits no discovery inspections', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    motionScoutMeasurement: {},
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('css-transition-hover');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: { incompleteRequired: REQUIRED_MOTION_DISCOVERY_SOURCES.length },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'css-transition-hover',
+      source: 'motion-scout-coverage',
+      status: 'missing',
+      message: 'css-transition-hover was not inspected',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve treats unrecognized Motion Scout inspection statuses as missing', () => {
+  const cwd = tempDir();
+  const inspections = completeMotionInspections('desktop').map(row => (
+    row.source === 'css-keyframes'
+      ? Object.assign({}, row, { status: 'skipped' })
+      : row
+  ));
+  const config = prepareGateRun(cwd, {
+    motionScoutMeasurement: {
+      sourceInspections: inspections,
+    },
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('css-keyframes');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'css-keyframes',
+      source: 'motion-scout-coverage',
+      status: 'missing',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks unknowns without reasons', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
