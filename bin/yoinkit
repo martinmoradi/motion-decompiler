@@ -12,6 +12,10 @@ const {
   createFixtureReconDriver,
   runRecon: runMapWorkbenchRecon,
 } = require('../lib/map-workbench/recon');
+const {
+  createFixtureStaticMapDriver,
+  runStaticMap: runMapWorkbenchStaticMap,
+} = require('../lib/map-workbench/static-map');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -33,6 +37,7 @@ Usage:
   bin/yoinkit yoink <run-dir> [manifest.json] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
   ${initUsageText()}
   bin/yoinkit recon <run-dir>
+  bin/yoinkit static-map <run-dir>
   bin/yoinkit map <run-dir>
   bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
   bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
@@ -3752,6 +3757,25 @@ function reconCommand(argv) {
   if (result.status === 'blocked') throw new ReconBlockedError(result);
 }
 
+function staticMapDriverFromEnv(env = process.env) {
+  if (env.YOINKIT_STATIC_MAP_FIXTURE) return createFixtureStaticMapDriver(env.YOINKIT_STATIC_MAP_FIXTURE);
+  return null;
+}
+
+function staticMapCommand(argv) {
+  const { help, positionals } = parseRunDirOnlyArgs(argv, 'static-map');
+  if (help || positionals.length !== 1) {
+    console.log('yoinkit static-map <run-dir>');
+    process.exit(help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  const result = runMapWorkbenchStaticMap(runDir, { driver: staticMapDriverFromEnv() });
+  console.log(`Static Map: ${result.status}`);
+  console.log(`Saved ${result.artifacts.measurements}`);
+  console.log(`Saved ${result.artifacts.assertions}`);
+  console.log(`Saved ${result.artifacts.coverage}`);
+}
+
 function mapCommand(argv) {
   const { flags, positionals } = parseFlags(argv);
   if (flags.help || positionals.length !== 1) {
@@ -3893,6 +3917,7 @@ function main() {
   else if (command === 'yoink') yoinkCommand(rest);
   else if (command === 'init') initCommand(rest);
   else if (command === 'recon') reconCommand(rest);
+  else if (command === 'static-map') staticMapCommand(rest);
   else if (command === 'map') mapCommand(rest);
   else if (command === 'plan') planCommand(rest);
   else if (command === 'capture') captureCommand(rest);
