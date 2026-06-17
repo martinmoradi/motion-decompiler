@@ -1,5 +1,13 @@
 # Human-Guided Observe Mode
 
+> **Where this fits:** Observe Mode is the **human-guided capture mode** of the
+> `yoink` pipeline — see [docs/ARCHITECTURE.md](../ARCHITECTURE.md). It is not a
+> separate product. It is the capture mode for the hard stuff automation misses
+> (Choreography, invisible hover zones, "the good bit"), and it drives the
+> human-gated *capture loop* that accretes into the Report. These remain loose
+> notes on its mechanics (toolbar, marks, focus area, scroll corridors); the
+> product framing is now settled in ARCHITECTURE.md and CONTEXT.md.
+
 Loose notes from June 16, 2026. This is not a formal spec yet. It is a place to
 keep the shape of the idea before it drifts.
 
