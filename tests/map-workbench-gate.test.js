@@ -411,6 +411,24 @@ test('yoinkit map-gate --approve-exception creates a canonical Page model except
   expect(gate.exceptionIds).toContain('exception-hero-crop');
 });
 
+test('yoinkit map-gate --approve-exception rejects an unknown Region scope', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-missing-region',
+    '--reason', 'This should not be recorded for an unknown Region.',
+    '--scope', 'region:does-not-exist',
+  ]);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('scope region:does-not-exist does not match a Page model Region');
+  const page = readJson(path.join(config.runDir, 'page-model.json'));
+  expect(page.exceptions).toEqual([]);
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
 test('yoinkit map-gate --approve blocks unapproved Page model exceptions', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
@@ -440,7 +458,7 @@ test('yoinkit map-gate --approve blocks unapproved Page model exceptions', () =>
   ]));
 });
 
-test('yoinkit map-gate requires final approval after approving a referenced exception', () => {
+test('yoinkit map-gate requires final approval after approving a scoped Region exception', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
     staticAssertions: [{
@@ -450,7 +468,12 @@ test('yoinkit map-gate requires final approval after approving a referenced exce
       status: 'fail',
       evidence: ['cookie banner covers the crop'],
       failure: 'required hero crop is blocked by the source cookie banner',
-      exceptionId: 'exception-hero-crop',
+    }],
+    staticCoverage: [{
+      area: 'region-hero',
+      required: true,
+      status: 'missing',
+      reason: 'region-level crop coverage is blocked by the same source cookie banner',
     }],
   });
 
@@ -478,6 +501,9 @@ test('yoinkit map-gate requires final approval after approving a referenced exce
     assertionSummary: {
       failedRequired: 0,
       exceptedRequired: 1,
+    },
+    coverageSummary: {
+      staticMap: { incompleteRequired: 0 },
     },
   });
   expect(gate.exceptionIds).toContain('exception-hero-crop');
