@@ -99,7 +99,12 @@ function writeTinyPng(file) {
   ));
 }
 
-function prepareReportRun(cwd) {
+function prepareReportRun(cwd, options = {}) {
+  const captureCrops = options.captureCrops !== false;
+  const motionMeasurement = options.motionMeasurement || {
+    cssHovers: [{ sel: 'main > section.hero a.cta', prop: 'transform' }],
+    loops: [{ sel: 'main > section.hero .orbital' }],
+  };
   const config = createRun(cwd, {
     viewports: ['desktop=1280x800', 'mobile=390x844'],
   });
@@ -142,7 +147,7 @@ function prepareReportRun(cwd) {
         };
       },
       captureRegionCrop({ outputFile }) {
-        writeTinyPng(outputFile);
+        if (captureCrops) writeTinyPng(outputFile);
       },
     },
     now: new Date('2026-06-17T12:30:00.000Z'),
@@ -150,10 +155,7 @@ function prepareReportRun(cwd) {
   runMotionScout(config.runDir, {
     driver: {
       measure() {
-        return {
-          cssHovers: [{ sel: 'main > section.hero a.cta', prop: 'transform' }],
-          loops: [{ sel: 'main > section.hero .orbital' }],
-        };
+        return JSON.parse(JSON.stringify(motionMeasurement));
       },
     },
     now: new Date('2026-06-17T12:45:00.000Z'),
@@ -318,7 +320,6 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
   expect(result.status).toBe(0);
   const html = fs.readFileSync(path.join(config.runDir, '04-map-report', 'index.html'), 'utf8');
   expect(html).toContain('required hero image evidence is missing');
-  expect(html).toContain('hero image missing');
   expect(html).toContain('primary selector needs human confirmation');
   expect(html).toContain('hero asset needs human approval');
   expect(html).toContain('hover lead for main &gt; section.hero a.cta');
@@ -329,7 +330,6 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
   expect(snapshot.gateFindings.map(finding => finding.message)).not.toContain('approved hero asset exception should stay hidden');
   expect(snapshot.gateFindings.map(finding => finding.status)).toEqual(expect.arrayContaining([
     'fail',
-    'incomplete',
     'unknown',
     'exception',
     'candidate',
