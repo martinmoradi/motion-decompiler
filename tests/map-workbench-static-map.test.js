@@ -4,12 +4,16 @@ const { afterEach, expect, test } = require('bun:test');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const crypto = require('crypto');
 
 const { initRun } = require('../lib/map-workbench/init');
 const { readJson, writeJson } = require('../lib/map-workbench/artifacts');
 const { runRecon } = require('../lib/map-workbench/recon');
-const { runStaticMap } = require('../lib/map-workbench/static-map');
+const {
+  createCaptureBrowserStaticMapDriver,
+  runStaticMap,
+} = require('../lib/map-workbench/static-map');
 
 const BIN = path.join(__dirname, '..', 'bin', 'yoinkit');
 const tempDirs = new Set();
@@ -23,6 +27,47 @@ function tempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yoinkit-static-map-test-'));
   tempDirs.add(dir);
   return dir;
+}
+
+function commandExists(command) {
+  const result = spawnSync(command, ['--version'], { encoding: 'utf8' });
+  return result.status === 0;
+}
+
+function startFixtureServer() {
+  const child = spawn(process.execPath, [path.join(__dirname, 'fixtures', 'static-map-server.js')], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`fixture server did not start${stderr ? `: ${stderr}` : ''}`));
+    }, 5_000);
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+    child.once('error', error => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.stdout.once('data', chunk => {
+      clearTimeout(timeout);
+      const url = chunk.toString().trim();
+      resolve({
+        url,
+        close: () => new Promise((closeResolve) => {
+          if (child.exitCode != null) {
+            closeResolve();
+            return;
+          }
+          child.once('exit', () => closeResolve());
+          child.kill('SIGTERM');
+        }),
+      });
+    });
+  });
 }
 
 function createRun(cwd, options = {}) {
@@ -77,6 +122,18 @@ function measuredCandidate(overrides = {}) {
     typography: [],
     assets: [],
   }, overrides);
+}
+
+function writeTinyPng(file) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, tinyPngBytes());
+}
+
+function tinyPngBytes() {
+  return Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lTO+8QAAAABJRU5ErkJggg==',
+    'base64'
+  );
 }
 
 test('static-map requires completed ready Recon evidence before writing Static Map artifacts', () => {
@@ -174,6 +231,9 @@ test('static-map creates a place-first Region scaffold from measured candidates'
         ],
       };
     },
+    captureRegionCrop({ outputFile }) {
+      writeTinyPng(outputFile);
+    },
   };
 
   const result = runStaticMap(config.runDir, {
@@ -199,7 +259,7 @@ test('static-map creates a place-first Region scaffold from measured candidates'
         rect: { x: 0, y: 72, width: 1280, height: 620 },
         scrollY: 0,
         placeholder: { width: 1280, height: 620 },
-        crop: { path: null, reason: 'crop capture deferred for Static Map Region scaffold slice' },
+        crop: { path: '02-static-map/crops/desktop/region-launch-faster.png' },
       },
       mobile: {
         presence: 'present',
@@ -230,7 +290,7 @@ test('static-map creates a place-first Region scaffold from measured candidates'
 
   const coverage = fs.readFileSync(path.join(config.runDir, '02-static-map', 'coverage.md'), 'utf8');
   expect(coverage).toContain('| region-launch-faster | Launch faster | required | complete |');
-  expect(coverage).toContain('crop capture deferred for Static Map Region scaffold slice');
+  expect(coverage).toContain('02-static-map/crops/desktop/region-launch-faster.png');
 
   expect(fs.readdirSync(config.runDir).sort()).toEqual(['00-config.json', '01-recon', '02-static-map', 'page-model.json']);
 });
@@ -482,6 +542,9 @@ test('static-map seeds Regions from the union of viewport candidates', () => {
           ],
         };
       },
+      captureRegionCrop({ outputFile }) {
+        writeTinyPng(outputFile);
+      },
     },
     now: new Date('2026-06-17T13:13:00.000Z'),
   });
@@ -501,6 +564,416 @@ test('static-map seeds Regions from the union of viewport candidates', () => {
   const coverage = fs.readFileSync(path.join(config.runDir, '02-static-map', 'coverage.md'), 'utf8');
   expect(coverage).toContain('| region-mobile-panel | Mobile panel | required | complete | mobile |');
 });
+
+test('static-map records crop evidence for every present Region viewport', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd, {
+    viewports: ['desktop=1280x800', 'mobile=390x844'],
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({
+      desktop: readyReconSnapshot(),
+      mobile: readyReconSnapshot({
+        dimensions: {
+          scrollWidth: 390,
+          scrollHeight: 1800,
+          clientWidth: 390,
+          clientHeight: 844,
+        },
+        viewport: { width: 390, height: 844, devicePixelRatio: 2 },
+      }),
+    }),
+    now: new Date('2026-06-17T12:34:00.000Z'),
+  });
+
+  const captured = [];
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure(targetUrl, viewport) {
+        const width = viewport.width;
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              selectors: ['main > section.hero'],
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              rect: { x: 0, y: viewport.id === 'mobile' ? 72 : 80, width, height: viewport.id === 'mobile' ? 520 : 600 },
+            }),
+            measuredCandidate({
+              selector: '#w-node-_generated',
+              selectors: ['#w-node-_generated'],
+              semantic: { tagName: 'section', heading: 'Generated only' },
+              rect: { x: 0, y: viewport.id === 'mobile' ? 620 : 700, width, height: 320 },
+            }),
+          ],
+        };
+      },
+      captureRegionCrop({ selector, outputFile, relativePath, region, viewport }) {
+        captured.push({ selector, relativePath, regionId: region.id, viewportId: viewport.id });
+        writeTinyPng(outputFile);
+        return { width: region.viewports[viewport.id].rect.width, height: region.viewports[viewport.id].rect.height };
+      },
+    },
+    now: new Date('2026-06-17T13:14:00.000Z'),
+  });
+
+  const hero = result.regions.find(region => region.id === 'region-launch-faster');
+  expect(hero.viewports.desktop.crop).toMatchObject({
+    path: '02-static-map/crops/desktop/region-launch-faster.png',
+    width: 1280,
+    height: 600,
+  });
+  expect(hero.viewports.mobile.crop).toMatchObject({
+    path: '02-static-map/crops/mobile/region-launch-faster.png',
+    width: 390,
+    height: 520,
+  });
+  expect(fs.statSync(path.join(config.runDir, hero.viewports.desktop.crop.path)).size).toBeGreaterThan(0);
+  expect(captured.map(call => [call.regionId, call.viewportId, call.selector])).toEqual([
+    ['region-launch-faster', 'desktop', 'main > section.hero'],
+    ['region-launch-faster', 'mobile', 'main > section.hero'],
+  ]);
+
+  const generated = result.regions.find(region => region.id === 'region-generated-only');
+  expect(generated.viewports.desktop.crop).toEqual({
+    path: null,
+    reason: 'no stable primary selector is available for crop capture',
+  });
+});
+
+test('static-map fetches safely discoverable Region asset evidence', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:36:00.000Z'),
+  });
+
+  const png = tinyPngBytes();
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              selectors: ['main > section.hero'],
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              rect: { x: 0, y: 80, width: 1280, height: 600 },
+              assets: [
+                {
+                  selector: 'img.hero-art',
+                  kind: 'img',
+                  url: 'https://example.com/assets/hero.png',
+                  role: 'content',
+                  intrinsic: { width: 1, height: 1 },
+                  rect: { x: 80, y: 140, width: 420, height: 260 },
+                },
+                {
+                  selector: '.missing-bg',
+                  kind: 'background-image',
+                  url: 'https://example.com/assets/missing.png',
+                  role: 'content',
+                },
+                {
+                  selector: 'img.analytics-pixel',
+                  kind: 'img',
+                  url: 'https://vendor.example/pixel.gif',
+                  role: 'vendor',
+                  required: false,
+                },
+              ],
+            }),
+          ],
+        };
+      },
+      fetchAsset({ url }) {
+        if (url.endsWith('/hero.png')) return { bytes: png, contentType: 'image/png' };
+        throw new Error('404 not found');
+      },
+    },
+    now: new Date('2026-06-17T13:16:00.000Z'),
+  });
+
+  const assets = result.regions[0].static.assets;
+  expect(assets).toHaveLength(3);
+  expect(assets[0]).toMatchObject({
+    selector: 'img.hero-art',
+    kind: 'img',
+    url: 'https://example.com/assets/hero.png',
+    path: '02-static-map/assets/region-launch-faster/hero.png',
+    contentType: 'image/png',
+    bytes: png.length,
+    sha256: crypto.createHash('sha256').update(png).digest('hex'),
+    dimensions: { width: 1, height: 1 },
+    status: 'fetched',
+    required: true,
+    severity: 'required',
+  });
+  expect(fs.statSync(path.join(config.runDir, assets[0].path)).size).toBe(png.length);
+  expect(assets[1]).toMatchObject({
+    selector: '.missing-bg',
+    status: 'missing',
+    path: null,
+    reason: 'asset fetch failed: 404 not found',
+    required: true,
+    severity: 'required',
+  });
+  expect(assets[2]).toMatchObject({
+    selector: 'img.analytics-pixel',
+    status: 'missing',
+    path: null,
+    reason: 'cross-origin asset fetch skipped',
+    required: false,
+    severity: 'info',
+  });
+});
+
+test('static-map records measured typography evidence and missing typography reasons', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:37:00.000Z'),
+  });
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              selectors: ['main > section.hero'],
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              rect: { x: 0, y: 80, width: 1280, height: 600 },
+              typography: [
+                {
+                  selector: 'h1.hero-title',
+                  sampleText: 'Launch faster',
+                  fontFamily: '"Inter", sans-serif',
+                  fontSize: '64px',
+                  fontWeight: '700',
+                  lineHeight: '72px',
+                  letterSpacing: '-1px',
+                  sourceHints: {
+                    stylesheetHrefs: ['https://example.com/site.css'],
+                    fontUrls: ['https://example.com/fonts/inter.woff2'],
+                  },
+                },
+                {
+                  selector: 'p.hero-copy',
+                  sampleText: 'Proof text',
+                  fontFamily: 'Arial, sans-serif',
+                  fontSize: '18px',
+                  fontWeight: '400',
+                },
+              ],
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:17:00.000Z'),
+  });
+
+  expect(result.regions[0].static.typography).toEqual([
+    {
+      selector: 'h1.hero-title',
+      sampleText: 'Launch faster',
+      fontFamily: '"Inter", sans-serif',
+      fontSize: '64px',
+      fontWeight: '700',
+      lineHeight: '72px',
+      letterSpacing: '-1px',
+      sourceHints: {
+        stylesheetHrefs: ['https://example.com/site.css'],
+        fontUrls: ['https://example.com/fonts/inter.woff2'],
+      },
+      missing: [],
+    },
+    {
+      selector: 'p.hero-copy',
+      sampleText: 'Proof text',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '18px',
+      fontWeight: '400',
+      lineHeight: null,
+      letterSpacing: null,
+      sourceHints: {
+        stylesheetHrefs: [],
+        fontUrls: [],
+        reason: 'no source stylesheet or font URL hints were discoverable',
+      },
+      missing: [
+        { field: 'lineHeight', reason: 'line-height was not measured' },
+        { field: 'letterSpacing', reason: 'letter spacing was not measured' },
+        { field: 'sourceHints', reason: 'no source stylesheet or font URL hints were discoverable' },
+      ],
+    },
+  ]);
+});
+
+test('static-map assertions and coverage include crop asset typography unknown and completeness rows', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:38:00.000Z'),
+  });
+
+  runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              selectors: ['main > section.hero'],
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              rect: { x: 0, y: 80, width: 1280, height: 600 },
+              typography: [
+                {
+                  selector: 'h1.hero-title',
+                  fontFamily: 'Inter',
+                  fontSize: '64px',
+                  fontWeight: '700',
+                  lineHeight: '72px',
+                  letterSpacing: '-1px',
+                },
+              ],
+              assets: [
+                {
+                  selector: 'img.hero-art',
+                  kind: 'img',
+                  url: 'https://example.com/assets/missing.png',
+                  role: 'content',
+                },
+                {
+                  selector: 'img.vendor-pixel',
+                  kind: 'img',
+                  url: 'https://vendor.example/pixel.gif',
+                  role: 'vendor',
+                  required: false,
+                },
+              ],
+            }),
+            measuredCandidate({
+              selector: '#w-node-_generated',
+              selectors: ['#w-node-_generated'],
+              semantic: { tagName: 'section', heading: 'Generated only' },
+              rect: { x: 0, y: 760, width: 1280, height: 320 },
+              typography: [
+                {
+                  selector: '#w-node-_generated h2',
+                  fontFamily: 'Arial',
+                  fontSize: '32px',
+                  fontWeight: '600',
+                  lineHeight: '40px',
+                  letterSpacing: '0px',
+                },
+              ],
+            }),
+          ],
+        };
+      },
+      captureRegionCrop({ outputFile }) {
+        writeTinyPng(outputFile);
+      },
+      fetchAsset() {
+        throw new Error('404 not found');
+      },
+    },
+    now: new Date('2026-06-17T13:18:00.000Z'),
+  });
+
+  const assertions = readJson(path.join(config.runDir, '02-static-map', 'assertions.json')).assertions;
+  expect(assertions).toContainEqual(expect.objectContaining({
+    id: 'static-map-region-launch-faster-desktop-crop',
+    kind: 'region-crop',
+    required: true,
+    status: 'pass',
+  }));
+  expect(assertions).toContainEqual(expect.objectContaining({
+    id: 'static-map-region-launch-faster-assets',
+    kind: 'region-assets',
+    required: true,
+    status: 'fail',
+    failure: '1 required asset is missing',
+  }));
+  expect(assertions).toContainEqual(expect.objectContaining({
+    id: 'static-map-region-launch-faster-typography',
+    kind: 'region-typography',
+    required: true,
+    status: 'pass',
+  }));
+  expect(assertions).toContainEqual(expect.objectContaining({
+    id: 'static-map-region-generated-only-unknowns',
+    kind: 'region-unknowns',
+    required: false,
+    status: 'info',
+  }));
+  expect(assertions).toContainEqual(expect.objectContaining({
+    id: 'static-map-region-launch-faster-evidence-completeness',
+    kind: 'region-evidence-completeness',
+    required: true,
+    status: 'fail',
+  }));
+
+  const coverage = fs.readFileSync(path.join(config.runDir, '02-static-map', 'coverage.md'), 'utf8');
+  expect(coverage).toContain('| region-crop | static-map-region-launch-faster-desktop-crop | required | complete |');
+  expect(coverage).toContain('| region-assets | static-map-region-launch-faster-assets | required | missing |');
+  expect(coverage).toContain('| region-unknowns | static-map-region-generated-only-unknowns | info | info |');
+  expect(coverage).toContain('| region-evidence-completeness | static-map-region-launch-faster-evidence-completeness | required | missing |');
+});
+
+const browserTest = commandExists('agent-browser') ? test : test.skip;
+
+browserTest('static-map browser fixture writes a non-empty Region crop', async () => {
+  const fixtureServer = await startFixtureServer();
+  const cwd = tempDir();
+  const fixtureUrl = fixtureServer.url;
+  const config = createRun(cwd, { url: fixtureUrl });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({
+      desktop: readyReconSnapshot({
+        finalUrl: fixtureUrl,
+        effectiveUrl: fixtureUrl,
+        title: 'Static Map Evidence Fixture',
+        dimensions: {
+          scrollWidth: 1280,
+          scrollHeight: 1300,
+          clientWidth: 1280,
+          clientHeight: 800,
+        },
+      }),
+    }),
+    now: new Date('2026-06-17T12:39:00.000Z'),
+  });
+
+  const session = `yoink-static-map-test-${process.pid}-${Date.now()}`;
+  const previousSession = process.env.AGENT_BROWSER_SESSION;
+  process.env.AGENT_BROWSER_SESSION = session;
+  try {
+    const result = runStaticMap(config.runDir, {
+      driver: createCaptureBrowserStaticMapDriver({ openDelayMs: 0 }),
+      now: new Date('2026-06-17T13:19:00.000Z'),
+    });
+    const firstCrop = result.regions
+      .flatMap(region => Object.values(region.viewports).map(viewport => viewport.crop))
+      .find(crop => crop && crop.path);
+
+    expect(firstCrop.path).toMatch(/^02-static-map\/crops\/desktop\/.+\.png$/);
+    expect(fs.statSync(path.join(config.runDir, firstCrop.path)).size).toBeGreaterThan(0);
+    expect(result.regions.some(region => region.static.typography.length > 0)).toBe(true);
+  } finally {
+    const env = Object.assign({}, process.env, { AGENT_BROWSER_SESSION: session });
+    spawnSync(path.join(__dirname, '..', 'bin', 'capture-browser'), ['close'], { env });
+    await fixtureServer.close();
+    if (previousSession === undefined) delete process.env.AGENT_BROWSER_SESSION;
+    else process.env.AGENT_BROWSER_SESSION = previousSession;
+  }
+}, 30_000);
 
 test('yoinkit static-map runs the Static Map stage from completed Recon inputs', () => {
   const cwd = tempDir();

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Static Map Evidence Fixture</title>
+    <style>
+      @font-face {
+        font-family: "Fixture Sans";
+        src: url("data:font/woff2;base64,d09GMgABAAAAAA") format("woff2");
+      }
+
+      body {
+        margin: 0;
+        font-family: "Fixture Sans", Arial, sans-serif;
+        color: rgb(22, 28, 35);
+        background: rgb(247, 249, 246);
+      }
+
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        min-height: 72px;
+        display: flex;
+        align-items: center;
+        padding: 0 48px;
+        background: rgb(255, 255, 255);
+        border-bottom: 1px solid rgb(210, 220, 214);
+      }
+
+      .hero {
+        min-height: 620px;
+        padding: 96px 72px;
+        background: rgb(221, 238, 229);
+      }
+
+      .hero h1 {
+        max-width: 640px;
+        margin: 0 0 24px;
+        font-size: 64px;
+        line-height: 72px;
+        font-weight: 700;
+        letter-spacing: -1px;
+      }
+
+      .hero p {
+        max-width: 520px;
+        font-size: 20px;
+        line-height: 30px;
+        letter-spacing: 0;
+      }
+
+      .hero img {
+        display: block;
+        width: 180px;
+        height: 120px;
+        margin-top: 40px;
+        object-fit: cover;
+      }
+
+      footer {
+        min-height: 220px;
+        padding: 48px 72px;
+        background: rgb(23, 35, 33);
+        color: rgb(245, 250, 246);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header" role="banner">
+      <nav aria-label="Primary">YoinkIt Fixture</nav>
+    </header>
+    <main>
+      <section class="hero" aria-label="Launch faster">
+        <h1>Launch faster</h1>
+        <p>Measured evidence for Static Map crops, assets, and typography.</p>
+        <img
+          class="hero-art"
+          alt="Abstract green square"
+          src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lTO+8QAAAABJRU5ErkJggg==">
+      </section>
+    </main>
+    <footer>
+      <h2>Footer</h2>
+    </footer>
+  </body>
+</html>
