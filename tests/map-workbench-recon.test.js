@@ -79,8 +79,10 @@ function fakeDriver(snapshots) {
     calls: [],
     probe(targetUrl, viewport) {
       this.calls.push({ targetUrl, viewport });
-      const snapshot = snapshots[viewport.id] || snapshots.default;
-      if (!snapshot) throw new Error(`Missing snapshot for ${viewport.id}`);
+      const snapshot = Object.prototype.hasOwnProperty.call(snapshots, viewport.id)
+        ? snapshots[viewport.id]
+        : snapshots.default;
+      if (snapshot === undefined) throw new Error(`Missing snapshot for ${viewport.id}`);
       return JSON.parse(JSON.stringify(snapshot));
     },
   };
@@ -201,6 +203,72 @@ test('recon records blockers while preserving collected evidence', () => {
   expect(readJson(path.join(config.runDir, 'page-model.json')).source.recon.status).toBe('blocked');
 });
 
+test('recon preserves collected evidence when a later viewport probe throws', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd, {
+    viewports: ['desktop=1280x800', 'mobile=390x844'],
+    primaryViewport: 'desktop',
+  });
+  const driver = {
+    calls: [],
+    probe(targetUrl, viewport) {
+      this.calls.push({ targetUrl, viewport });
+      if (viewport.id === 'mobile') throw new Error('browser target closed');
+      return readySnapshot();
+    },
+  };
+
+  const result = runRecon(config.runDir, {
+    driver,
+    now: new Date('2026-06-17T13:05:00.000Z'),
+  });
+
+  expect(result.status).toBe('blocked');
+  expect(driver.calls.map(call => call.viewport.id)).toEqual(['desktop', 'mobile']);
+
+  const pageState = readJson(path.join(config.runDir, '01-recon', 'page-state.json'));
+  expect(pageState.status).toBe('blocked');
+  expect(pageState.viewports).toHaveLength(2);
+  expect(pageState.viewports[0]).toMatchObject({
+    viewportId: 'desktop',
+    status: 'ready',
+    title: 'Ready page',
+  });
+  expect(pageState.viewports[1]).toMatchObject({
+    viewportId: 'mobile',
+    status: 'blocked',
+    blockers: [{ type: 'browser-error', evidence: 'browser target closed', viewportId: 'mobile' }],
+  });
+  expect(readJson(path.join(config.runDir, 'page-model.json')).source.recon.status).toBe('blocked');
+});
+
+test('recon does not report top-level ready for loading or empty probes', () => {
+  const loadingCwd = tempDir();
+  const loadingConfig = createRun(loadingCwd);
+  const loading = runRecon(loadingConfig.runDir, {
+    driver: fakeDriver({
+      desktop: readySnapshot({
+        readiness: { status: 'loading', readyState: 'interactive', textLength: 24 },
+        blockers: [],
+      }),
+    }),
+    now: new Date('2026-06-17T13:06:00.000Z'),
+  });
+
+  expect(loading.status).toBe('not-ready');
+  expect(readJson(path.join(loadingConfig.runDir, '01-recon', 'page-state.json')).viewports[0].status).toBe('loading');
+
+  const emptyCwd = tempDir();
+  const emptyConfig = createRun(emptyCwd);
+  const empty = runRecon(emptyConfig.runDir, {
+    driver: fakeDriver({ desktop: null }),
+    now: new Date('2026-06-17T13:07:00.000Z'),
+  });
+
+  expect(empty.status).toBe('not-ready');
+  expect(readJson(path.join(emptyConfig.runDir, '01-recon', 'page-state.json')).viewports[0].status).toBe('not-ready');
+});
+
 test('recon retargets dominant same-origin iframe content with explicit evidence', () => {
   const cwd = tempDir();
   const config = createRun(cwd);
@@ -299,7 +367,11 @@ test('recon records dominant cross-origin iframe content as a blocker', () => {
       viewportId: 'desktop',
     },
   ]);
-  expect(readJson(path.join(config.runDir, '01-recon', 'page-state.json')).viewports[0].dominantIframe.url).toBe(iframeUrl);
+  const pageState = readJson(path.join(config.runDir, '01-recon', 'page-state.json'));
+  expect(pageState.viewports[0].dominantIframe.url).toBe(iframeUrl);
+  expect(pageState.viewports[0].status).toBe('blocked');
+  expect(pageState.viewports[0].readiness.status).toBe('blocked');
+  expect(readJson(path.join(config.runDir, '01-recon', 'viewport-manifest.json')).viewports[0].readiness.status).toBe('blocked');
 });
 
 test('recon preserves non-Recon Page model fields and existing Region data', () => {

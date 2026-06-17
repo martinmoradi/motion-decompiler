@@ -66,10 +66,11 @@ For a fully automatic pass, accepting the proposed plan without review:
 ./bin/yoinkit yoink https://mammothmurals.com/
 ```
 
-Map workbench is in progress. The implemented stage-runner command is:
+Map workbench is in progress. The implemented stage-runner commands are:
 
 ```bash
 RUN="$(./bin/yoinkit init https://mammothmurals.com/)"
+./bin/yoinkit recon "$RUN"
 ```
 
 `init` materializes the run shell only: `00-config.json` and the minimal
@@ -77,6 +78,11 @@ RUN="$(./bin/yoinkit init https://mammothmurals.com/)"
 is supplied. It resolves viewport shorthand and the primary viewport, then
 stops. It does not open a browser, map the page, propose captures, or write
 later-stage artifacts.
+
+`recon` reads that run configuration, probes the configured viewport set, writes
+`01-recon/` evidence, and updates only Recon-owned page-level facts in
+`page-model.json`. It does not create Regions, motion candidates, Report output,
+or later-stage artifacts.
 
 The legacy prototype commands remain available when you want to step through or
 rerun one capture phase:
