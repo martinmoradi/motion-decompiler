@@ -10,6 +10,7 @@ const { spawnSync } = require('child_process');
 
 const { initRun } = require('../lib/map-workbench/init');
 const {
+  configPath,
   mapReportDir,
   motionScoutDir,
   readJson,
@@ -348,6 +349,53 @@ test('yoinkit map-gate --approve blocks stale Report v0 inputs', () => {
       id: 'page-model.json',
       source: 'report-freshness',
       status: 'stale',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks stale Report config inputs', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const configFile = configPath(config.runDir);
+  const storedConfig = readJson(configFile);
+  storedConfig.targetUrl = 'https://example.com/changed-after-report';
+  writeJson(configFile, storedConfig);
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('00-config.json');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.freshnessSummary).toMatchObject({
+    staleInputs: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '00-config.json',
+      source: 'report-freshness',
+      status: 'stale',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks missing Report config inputs', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  fs.rmSync(configPath(config.runDir));
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('00-config.json');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.freshnessSummary).toMatchObject({
+    missingInputs: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '00-config.json',
+      source: 'report-freshness',
+      status: 'missing',
     }),
   ]));
 });
