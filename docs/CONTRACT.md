@@ -725,6 +725,11 @@ Assertion rows include:
 - evidence references
 - failure or exception reference when applicable
 
+Static Map assertion kinds include Region geometry, placeholders, per-viewport
+crops, Region assets, Region typography, unknowns, and Region evidence
+completeness. Unknown rows can be informational; required completeness rows fail
+only when required evidence is missing.
+
 Each Region must have:
 
 - stable id
@@ -754,13 +759,48 @@ Minimum Region v0 shape:
       "stacking": { "zIndex": "auto" },
       "scrollY": 0,
       "placeholder": { "width": 1280, "height": 760 },
-      "crop": { "path": "02-static-map/crops/region-hero.desktop.png" }
+      "crop": {
+        "path": "02-static-map/crops/desktop/region-hero.png",
+        "width": 1280,
+        "height": 760,
+        "bytes": 12345,
+        "selector": "main > section.hero",
+        "method": "agent-browser-selector-screenshot"
+      }
     }
   },
   "static": {
     "colors": [],
-    "typography": [],
-    "assets": [],
+    "typography": [
+      {
+        "selector": "h1",
+        "sampleText": "Launch faster",
+        "fontFamily": "Inter, sans-serif",
+        "fontSize": "64px",
+        "fontWeight": "700",
+        "lineHeight": "72px",
+        "letterSpacing": "-1px",
+        "sourceHints": {
+          "stylesheetHrefs": ["https://example.com/site.css"],
+          "fontUrls": ["https://example.com/fonts/inter.woff2"]
+        },
+        "missing": []
+      }
+    ],
+    "assets": [
+      {
+        "selector": "img.hero-art",
+        "kind": "img",
+        "url": "https://example.com/assets/hero.png",
+        "path": "02-static-map/assets/region-hero/hero.png",
+        "status": "fetched",
+        "sha256": "hash",
+        "bytes": 12345,
+        "dimensions": { "width": 640, "height": 360 },
+        "required": true,
+        "severity": "required"
+      }
+    ],
     "layout": {}
   },
   "source": {
