@@ -541,6 +541,35 @@ test('yoinkit map-gate parses escaped pipes in coverage table cells', () => {
   ]));
 });
 
+test('yoinkit map-gate scopes coverage parser headers to each markdown table section', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  writeText(path.join(staticMapDir(config.runDir), 'coverage.md'), [
+    '# Static Map Coverage',
+    '',
+    '| Area | Name | Required | Status | Evidence | Reason |',
+    '| --- | --- | --- | --- | --- | --- |',
+    '| region-hero | Hero | required | complete | fixture | |',
+    '',
+    '## Skipped Assets',
+    '',
+    '| Region | Asset | Gate Impact | Reason | Recovery |',
+    '| --- | --- | --- | --- | --- |',
+    '| region-hero | hero.png | required | missing | retry asset fetch |',
+    '',
+  ].join('\n'));
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:12:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(0);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    staticMap: { incompleteRequired: 0 },
+  });
+  expect(gate.blockers).toEqual([]);
+});
+
 test('yoinkit map-gate --approve blocks uninspected required Motion Scout discovery sources', () => {
   const cwd = tempDir();
   const inspections = completeMotionInspections('desktop').map(row => (
