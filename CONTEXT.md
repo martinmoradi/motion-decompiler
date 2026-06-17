@@ -1,19 +1,20 @@
 # YoinkIt
 
-YoinkIt captures what makes a web experience feel premium — chiefly its motion —
-faithfully enough to understand and reproduce it, and re-expresses it as clean,
-remixable material. It is a tool for copying-then-modifying high-end frontend
-craft, not for cloning a site's code.
+YoinkIt is a cloning workflow for high-end frontend craft: it captures what makes
+a web experience feel premium, chiefly its motion, faithfully enough to
+understand, reproduce, modify, and reuse it. It clones the experience, not the
+source code.
 
 ## Language
 
 ### The product
 
 **Yoink**:
-To capture what makes a site's experience good (its [[Signature]], chiefly
-motion), measured faithfully, and re-express it as clean, remixable components
-with clear props and docs. Faithful to the *experience*, idiomatic in the *code*.
-_Avoid_: Clone, copy, scrape, rip.
+To clone a source experience in a way that can be modified: capture what makes it
+good (its [[Signature]], chiefly motion), measure it faithfully, and re-express it
+as clean, remixable components with clear props and docs. Faithful to the
+*experience*, idiomatic in the *code*.
+_Avoid_: Scrape, rip, source-code clone.
 
 **Signature**:
 The specific motion and design that make a site feel premium — the part worth
@@ -25,10 +26,23 @@ How faithfully a yoink measures what the site actually does. The capture must be
 accurate enough that the motion can be reproduced "as good as possible." This is
 the bar that matters.
 
-**Fidelity of implementation** (none, deliberately):
+**Static Fidelity**:
+Strict measured accuracy for the non-motion facts of the experience: Region
+geometry, scroll positions, crops, responsive presence, layout dimensions,
+colors, typography, assets, and states. High Static Fidelity is required because
+bad static facts poison the Report, Spec, observe targeting, and implementation
+foundation.
+_Avoid_: Pixel perfect.
+
+**Source-code Fidelity** (none, deliberately):
 YoinkIt does *not* reproduce the source's code structure, framework, or
 libraries. Output is clean, idiomatic components — not a code-level clone. This
-is the deliberate split from a 1:1 site cloner.
+is the deliberate split from a source-faithful site cloner.
+
+**House stack**:
+The default implementation stack YoinkIt uses for built outputs so yoinks share a
+common component and motion vocabulary. It can be overridden explicitly for a
+project, but it is never inferred from the source site's stack.
 
 ### The unit of work
 
@@ -82,10 +96,21 @@ It *accretes* across capture passes (each pass merges in, it is not regenerated)
 and is meant to make *gaps* visible: blank regions are the parts not yet captured.
 The human gates completeness by judging the report done. Edits the human makes in
 the report (rename, importance, verify-flag, note) write *back into* the
-[[Page model]], they do not decorate the HTML. [[Region]]s are drawn as tame,
-low-opacity color overlays so the human sees exactly which regions the agent is
-working from; uncovered (uncolored) stretches read as gaps.
+[[Page model]], they do not decorate the HTML. [[Report View Mode]]s let the
+same Report serve source-like assessment, Region debugging, and gate review
+without changing the underlying model.
 _Avoid_: Doc, output (too generic).
+
+**Improve pass**:
+A focused follow-up cycle started from an existing [[Report]], [[Spec]], and
+implementation status. The agent reads the run state, uses the Report to orient
+with the human, and works only on the gaps or failures that matter next.
+
+**Report View Mode**:
+A way of looking at the [[Report]] for a specific assessment task. Source mode
+emphasizes source-like crops and measured static visuals; Region mode emphasizes
+artificial overlays, labels, and tooltips; Gate mode emphasizes missing,
+uncertain, or blocking items.
 
 **Spec**:
 The machine-facing *projection* of the [[Page model]]: the compact structured
@@ -94,6 +119,15 @@ The machine-facing *projection* of the [[Page model]]: the compact structured
 context. It references [[Clip]] paths but never inlines frames — the build agent
 samples frames only for low-[[Confidence]] items, ideally via a delegated
 sub-agent that returns a text verdict.
+
+**Draft implementation**:
+A build started after the [[Map Gate]] passes but before Capture completeness has
+been approved. It can be strict on [[Static Fidelity]] and measured motion, but it
+must carry verify items and gaps honestly.
+
+**Candidate implementation**:
+A build started from a Capture-approved [[Spec]], or promoted after open verify
+items and gaps are resolved enough for final review.
 
 **Confidence**:
 A per-item honesty marker on captured motion: `measured` (sampled from real
@@ -124,6 +158,18 @@ well. The honest, precise half of the tool. Its output is a **place-first page
 model**: an ordered list of [[Region]]s top-to-bottom, *not* a flat inventory of
 capabilities. It is the model the [[Report]] renders to scale.
 _Avoid_: Scan (means something narrower in the engine API).
+
+**Map Gate**:
+The approval point between [[Map]] and [[Capture]] where the human checks that
+the [[Report]] v0's Regions, rects, crops, scroll positions, responsive presence,
+and names are accurate enough to serve as the spatial truth for capture and
+implementation. It is binary: required assertions pass, coverage is complete,
+unknowns are recorded honestly, and exceptions proceed only when human-approved.
+
+**Dependency-Aware Gate**:
+A gate that blocks only the stages that depend on the missing evidence. A later
+stage may proceed when its prerequisites are met, as long as lower-confidence
+items and gaps are carried forward honestly instead of being treated as measured.
 
 **Capture**:
 Driving real events in a real, visible browser and sampling computed style per

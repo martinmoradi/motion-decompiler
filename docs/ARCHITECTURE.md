@@ -2,18 +2,19 @@
 
 This is the product-level north star: what YoinkIt is for, the unit of work, the
 pipeline shape, and how a yoink converges. It sits *above* the engine pipeline
-detail in [SPEC.md](./SPEC.md) and the execution sequence in
-[ROADMAP.md](./ROADMAP.md). Vocabulary used here is defined in
-[CONTEXT.md](../CONTEXT.md). The two hard decisions behind it are recorded in
+detail in [SPEC.md](./SPEC.md), the execution sequence in
+[ROADMAP.md](./ROADMAP.md), and the procedural run contract in
+[CONTRACT.md](./CONTRACT.md). Vocabulary used here is defined in
+[CONTEXT.md](../CONTEXT.md). Hard decisions behind it are recorded in
 [docs/adr/](./adr/).
 
 ## What YoinkIt is for
 
-YoinkIt exists to **copy-and-modify high-end frontend craft instead of inventing
+YoinkIt exists to **clone-and-modify high-end frontend craft instead of inventing
 from a blank page.** There is one spine and one forcing function:
 
 - **B (the spine): deliver client prototypes fast.** Real client, real deadline,
-  branding/design done by a non-designer. The strategy is copy-then-modify, not
+  branding/design done by a non-designer. The strategy is clone-then-modify, not
   invent.
 - **A (a quality bar on B, not a separate product): legibility.** A yoink's
   output has to be understandable enough that the human can modify it and learn
@@ -23,7 +24,8 @@ from a blank page.** There is one spine and one forcing function:
   "premium LEGO" — a clean, decomposed motion you can recombine later. C accretes
   for free *if* B's output is clean and legible. It is not a thing to build now.
 
-It is **not** a 1:1 site cloner. See [ADR-0001](./adr/0001-reexpress-not-clone.md).
+It is a cloner of experiences, not a source-code cloner. See
+[ADR-0001](./adr/0001-clone-experience-not-source-code.md).
 
 ## The unit of work
 
@@ -48,7 +50,9 @@ One `yoink` pipeline, two capture modes, plus a separate downstream skill:
    referent captures attach to and the model the Report renders to scale; without
    it, captured IDs are floating signifiers. (The current engine emits a
    capability-first flat selector bag — `{ scrollTriggers[], hoverCandidates[],
-   loops[], … }` — and will be rebuilt place-first.)
+   loops[], … }` — and will be rebuilt place-first.) Map ends with a **Map
+   Gate**: the human approves the Report v0's Regions, rects, crops, scroll
+   positions, responsive presence, and names before Capture begins.
 2. **Capture** — measure motion, attached to the map's named Regions. Two modes:
    - **Automated** — the agent drives known triggers (hover/scroll/click).
    - **Observe (human-guided)** — the human drives a real browser and the engine
@@ -66,13 +70,127 @@ One `yoink` pipeline, two capture modes, plus a separate downstream skill:
      page, placeholders at real positions, captured motion/crops/verify-flags
      pinned where they happen. For *assessment*. Accretes across passes; makes
      gaps visible. Zero context cost — it never re-enters an agent. Human edits
-     (rename, importance, verify, note) write *back into* the page model.
+     (rename, importance, verify, note) write *back into* the page model. It has
+     explicit view modes:
+     - **Source mode** renders source-like evidence first: region crops where
+       available, measured static visuals and tokens as fallbacks, exact Region
+       rects and scroll positions.
+     - **Region mode** adds artificial debug overlays: low-opacity tints, inset
+       non-layout-affecting borders, hover outlines, labels, and tooltips with
+       Region name, rect, scroll-Y, viewport presence, and gaps.
+     - **Gate mode** emphasizes missing, uncertain, or blocking items for the
+       current approval gate.
    - **Spec** (machine-facing serialization): the compact JSON the build phase
      ingests. The only projection that re-enters context.
 
 The downstream **`implement`** skill is a *separate context*: it reads the Spec
 and builds clean running components. Kept separate so capture never bloats with
 implementation. See [ADR-0002](./adr/0002-spec-report-separate-build.md).
+
+## Delivery shape
+
+YoinkIt is **agent-session-first**, with a deterministic workbench underneath.
+The product brain lives in the agent session: deciding what to capture next,
+guiding observe, judging gaps in the Report, stopping the capture loop, and
+handing the Spec to `implement`. The workbench owns repeatable operations with
+no taste or judgment: mapping, opening the observe browser, merging passes,
+generating the Report, emitting the Spec, and managing run artifacts.
+
+Both skill arguments and CLI flags compile into the same `00-config.json`. The
+skill is the friendly product entrypoint, while the CLI is the deterministic way
+to create, update, or execute the same run configuration. `implement` uses the
+same config under its own section: `spec.json` is the main implementation input,
+while `00-config.json` carries operational settings like output path, target
+stack, gate tolerances, and check-in policy.
+
+The CLI is a **stage runner**, not the product brain. Commands such as `init`,
+`map`, `report`, `map-gate`, `capture`, `merge-pass`, `spec`, and `validate`
+perform repeatable work against `00-config.json` and the run artifacts. They do
+not decide what is worth capturing, whether a Report is good, or when the product
+has succeeded; those judgment calls stay in the agent session and the human
+gates.
+
+The existing `bin/yoinkit` is prototype material, not the architecture to
+preserve. Reuse working browser-driving, artifact-writing, map/capture, and
+repair-loop code where it fits the contract, but rebuild the CLI shape around
+the Page model, Map Gate, Report view modes, and deterministic stage-runner
+boundary.
+
+There are two product-level agent skills:
+
+- **`yoink`** — understand the source experience and produce Report + Spec.
+- **`implement`** — consume the Spec and build clean running components.
+
+Both are visible user-facing skills from day one. `yoink` may offer a convenience
+handoff such as `--then-implement`, but that handoff still crosses the Report +
+Spec boundary and starts `implement` as the build context rather than folding
+implementation into capture.
+
+Sub-agents, including a clip/video inspector, are internal helpers rather than
+user-facing product entrypoints.
+
+This keeps human and agent judgment in the layer that can reason about
+Signature, while the deterministic layer stays boring, replayable, and useful
+across agents.
+
+## Borrowing from clone-app
+
+YoinkIt should take as much of `clone-app-pat-pro`'s rigor as possible and relax
+only where that rigor directly conflicts with YoinkIt's product. The reusable
+parts are the contract shape: explicit stage inputs and outputs, fixed artifact
+paths, evidence rules, anti-hallucination rules, binary gates, coverage
+manifests, `null + reason` for unknowns, hard check-ins, and measured convergence
+loops. The relaxed parts are only the pieces that conflict with YoinkIt's product:
+source-code cloning, framework/library fidelity, source architecture fidelity,
+and pretending motion can be pixel-diffed as if it were static layout.
+
+## Implementation stack
+
+YoinkIt has a default **House stack** so outputs compound into one reusable
+library instead of scattering across whatever framework the source happened to
+use. The default stack is:
+
+- React
+- Bun
+- Vite
+- Lenis
+- GSAP
+- CSS Modules
+
+Lenis is default-on in the House stack. If the source has detectable smooth
+scroll behavior, YoinkIt calibrates Lenis toward it; if not, it uses YoinkIt's
+house Lenis settings. Disabling Lenis requires an explicit config override or a
+human-approved exception because smooth scroll is part of the default premium
+frontend baseline this product targets.
+
+CSS-authored motion stays CSS when it can be ported cleanly and faithfully:
+transitions, keyframes, and simple local animations should not be rewritten into
+GSAP for ceremony. GSAP is the default for Signature motion that needs an
+animation runtime: choreography, scroll-triggered motion, timelines, staged
+reveals, and complex hover sequences. The implementation agent should not reach
+for Framer Motion, Anime.js, or source-site motion libraries unless explicitly
+overridden.
+
+The House stack can be overridden explicitly in `00-config.json`, for example to
+target Astro for a specific project. It is never inferred from or copied from the
+source site.
+
+Implementation output should have an explicit, documented file architecture
+before code generation fans out. The implement skill has permanent references
+for the standard House architecture, kept inside this repo for now because they
+depend on YoinkIt terms like Region, Spec, Confidence, Clip, Static Fidelity, and
+House stack. Each run has a minimal Architecture stage that writes
+`file-tree.md`, `component-map.md`, and `motion-map.md` for the current Spec.
+This is a guardrail against god files and mystery CSS, not an invitation to
+over-design. CSS Modules are the default styling boundary: component styling,
+responsive rules, state selectors, and local animation classes live beside the
+component. Global CSS is for tokens and House stack shell rules. Inline styles
+are reserved for dynamic runtime values or assigning CSS custom properties such
+as measured delays.
+
+Barba.js is a deferred candidate for inter-page transitions, not part of the
+default stack yet. The first-client scope is one landing page, so this decision
+waits until page transitions enter scope.
 
 ## Viewports, assets, and reconciliation
 
@@ -102,7 +220,8 @@ part-inferred by the Map and part-marked by the human in observe. See
 **Assets** are a Map-phase concern (static, headless), not a Capture concern. For
 the first client they are **bulk-fetched** so the prototype has real assets for
 judging composition and visual balance — a deliberate, *revisable* deviation from
-[ADR-0001](./adr/0001-reexpress-not-clone.md)'s "don't haul their bytes," to be
+[ADR-0001](./adr/0001-clone-experience-not-source-code.md)'s "don't haul their
+bytes," to be
 narrowed to assets-the-motion-depends-on once the baseline workflow is proven.
 
 ## Two convergence loops, the Report is the handoff
@@ -115,16 +234,59 @@ narrowed to assets-the-motion-depends-on once the baseline workflow is proven.
   the spec is the *gate* that verifies the reproduction — a loop clone-app
   structurally cannot run for motion.
 
+After implementation begins, the Report also accretes build status. It remains
+the human-facing dashboard for the whole run: Map state, Capture confidence,
+Static Fidelity assertions, motion assertions, gaps, exceptions, and draft vs
+candidate implementation state. Follow-up work can start from that Report/run
+state as an **Improve pass**, where the agent and human focus directly on the
+highest-value failure or gap instead of replaying the full pipeline. The visible
+command is `implement --improve <run-dir>`.
+
 Gate tightness tracks each item's **Confidence**: `measured` items gate tight
 (like clone-app's structural assertions); `verify` items get loose tolerance or a
 human check. Driving the gate tighter than the spec's own confidence is chasing
 measurement noise.
+
+Gates are **dependency-aware**. The Map Gate must pass before Capture or
+Implement because both depend on spatial/static truth. Full Capture completeness
+is required before calling the yoink complete, but it does not have to block an
+implementation draft; `implement` can start from a trusted Map plus whatever
+motion evidence exists, carrying `verify` items and gaps forward honestly. A
+build started before Capture completeness is a **draft implementation**; a build
+from a Capture-approved Spec, or one whose gaps have been resolved enough for
+final review, is a **candidate implementation**.
 
 **The system's quality ceiling is set by capture quality, not build quality.** A
 good spec converges easily under self-measurement; an uncertain spec cannot be
 rescued by build-side measuring, because the build is hill-climbing toward the
 wrong target. This is why the investment goes into capture quality and the
 human observe loop — they raise the ceiling the build can reach.
+
+## Fidelity gates by layer
+
+YoinkIt uses **Static Fidelity** for the strict non-motion facts, and different
+gates for motion and code architecture. Each layer has the tightest gate that
+matches what can be measured honestly:
+
+- **Map geometry is strict.** Region rects, scroll-Y positions, crops, assets,
+  responsive presence, and static dimensions are measured as exact page facts.
+  If these drift, every downstream artifact inherits the wrong spatial referent.
+  The Map Gate makes this explicit before Capture starts: required assertions
+  must pass, coverage checklist rows must be complete, unknowns must be recorded
+  as `null + reason`, and any exception must be approved by the human and written
+  into the Page model. Warnings do not silently pass the gate.
+- **Static visual implementation is strict.** The build should inherit
+  clone-app-style rigor for the foundation: fonts where available, colors,
+  gradients, spacing, sizing, states, responsive geometry, and assets are checked
+  with tight measured assertions. This denies the implementation agent creative
+  freedom on fundamentals.
+- **Motion implementation is measured but looser.** Measured motion gates tightly
+  where the Spec is confident, while `verify` items use looser tolerances,
+  Clips, and human judgment. Pixel-diffing clean remixes against the source is
+  rejected as a false precision.
+- **Code architecture is deliberately not source-faithful.** The build is judged
+  by clean, idiomatic, remixable components, not by whether it copied the
+  source's framework, libraries, DOM structure, or implementation architecture.
 
 ## Observe mode in practice
 
@@ -168,13 +330,14 @@ for items the Spec already nails. Clips do not enable a tighter machine gate
 (pixel-diffing a clean remix against the source is rejected); they feed agent
 reasoning and the human verify path.
 
-## Divergence from clone-app
+## Relationship to clone-app
 
 `clone-app-pat-pro` reproduces *structure* and hits fidelity by **copying the
 source's code, framework, and libraries**, gated on static computed-style
-assertions. YoinkIt refuses that shortcut: faithful to the *experience*,
-idiomatic in the *code*. The burden therefore moves onto capture quality and
-clean decomposition — which is the actual moat, and the part clone-app waves away
+assertions. YoinkIt keeps the cloning goal and much of the rigor, but refuses
+that shortcut: faithful to the *experience*, idiomatic in the *code*. The burden
+therefore moves onto capture quality and clean decomposition — which is the
+actual moat, and the part clone-app waves away
 ("motion is rules, a coding agent rebuilds it from the spec").
 
 ## First client: build order
@@ -187,7 +350,8 @@ because legibility (not breadth) was the blocker:
    rects + crops + assets) everything hangs on. Multi-viewport deferred.
 2. **Report v0, before capture** — render the dimensional scaffold with region
    overlays and gaps from *just the map*. Highest-leverage early win: you can
-   *see* and validate the referent before any motion work.
+   *see* and validate the referent before any motion work. This is the first
+   Map Gate.
 3. **Observe capture: focus-area + clip + trigger** — merging into the Page model,
    Report re-rendering. Prove on one motion (mammoth's work-card hover).
 4. **Spec + `implement` skill** — Spec → one clean component you watch move. The
