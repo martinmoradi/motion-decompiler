@@ -20,6 +20,7 @@ const {
   writeText,
 } = require('../lib/map-workbench/artifacts');
 const { runMapReport } = require('../lib/map-workbench/map-report');
+const { runMapGate } = require('../lib/map-workbench/map-gate');
 const { runMotionScout } = require('../lib/map-workbench/motion-scout');
 
 const BIN = path.join(__dirname, '..', 'bin', 'yoinkit');
@@ -1521,5 +1522,13 @@ test('yoinkit map-gate --reject requires a human-readable reason', () => {
 
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('map-gate --reject requires --reason');
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
+test('runMapGate rejects direct rejection calls without a human-readable reason', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  expect(() => runMapGate(config.runDir, { action: 'reject' })).toThrow('map-gate --reject requires --reason');
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
