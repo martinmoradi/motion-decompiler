@@ -105,6 +105,9 @@ leads for later Capture: trigger, target selector, Region attachment or
 mechanical priority hint. They deliberately do not store measured duration,
 easing, from/to values, sampled timelines, capture ids, Signature importance, or
 implementation component/token names.
+Coverage records whether each required discovery source was inspected for each
+measured viewport. A source with zero candidates can pass when inspected; a
+source-level probe failure blocks only that source and keeps sibling evidence.
 
 `map-report` requires completed Recon, Static Map, and Motion Scout artifacts,
 then writes the portable static Report v0 to `04-map-report/index.html` and
@@ -130,6 +133,8 @@ required coverage, reasoned unknowns, and approved blocking exceptions:
 Approving an exception stores a canonical human-approved exception in
 `page-model.json` and records it in `gate.json`, but it is not final gate
 approval. Run `map-gate --approve` afterward when the Report is ready.
+Markdown coverage statuses such as `approved` or `exception` do not waive a
+required item; only canonical `page-model.json` exceptions can do that.
 
 Asset fetching is safe by default. Same-origin assets are fetched; `file:` and
 cross-origin assets are skipped, reported in `coverage.md`, and printed in the

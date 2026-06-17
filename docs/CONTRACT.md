@@ -637,6 +637,15 @@ Motion Scout writes candidates in two shapes:
   can show each candidate in its spatial home without duplicating the full
   candidate object.
 
+`03-motion-scout/motion-candidates.json` also records discovery coverage under
+`discovery.inspections[]`. Each row represents one discovery source at one
+measured viewport, with `source`, `viewportId`, `required`, `status`, candidate
+count, evidence, and an optional reason. Required v0 sources are
+`css-transition-hover`, `hover-affordance`, `css-keyframes`,
+`css-keyframes-loop`, `split-reveal-dom`, `scroll-trigger-registry`,
+`sticky-pinned-clue`, `click-affordance`, and `cursor-affordance`.
+`unknown-motion-clue` is not a required source.
+
 Motion candidates are leads, not measurements. They may record a likely trigger,
 source selector, Region id, and evidence source. They must not record measured
 duration, easing, from/to values, or frame timelines.
@@ -720,7 +729,11 @@ human scan versus deterministic validation.
 same split for candidate discovery. They answer whether Motion Scout inspected
 the obvious motion sources before human review: registries, CSS transitions,
 CSS keyframes, split reveals, hover affordances, loops, and scroll-trigger
-sources. They gate discovery coverage, not motion fidelity.
+sources. They gate discovery coverage, not motion fidelity. `complete` means the
+source was inspected for that viewport, even when it found zero candidates.
+`missing` blocks the Map Gate when the source was not inspected or could not be
+inspected. `out_of_scope` must carry an explicit reason. `info` is only
+non-blocking context and is not a substitute for required coverage.
 
 Coverage Markdown and assertion JSON are generated from a shared in-memory model.
 Markdown is optimized for human scanning; JSON is optimized for deterministic
@@ -874,9 +887,14 @@ Map Gate exceptions use `stage: "map-gate"`. V0 does not invent identity or auth
 the important fact is that the exception was not agent-silenced.
 
 `map-gate` must fail an approval when required assertions fail or coverage rows
-are incomplete unless each blocking item has already been marked out of scope or
-approved as an exception. The command records explicit approval or rejection; it
-does not infer either from the Report.
+are incomplete unless each blocking item has already been marked out of scope by
+the producer or waived by a canonical human-approved exception in
+`page-model.json`. Coverage statuses such as `approved` and `exception` are not
+canonical waivers and must not pass the gate. A Region-scoped Map Gate exception
+uses `scope: { "kind": "region", "id": "<region-id>" }`; the id must resolve to
+a real Page model Region, and the approved exception waives required blockers
+whose target resolves to that Region. The command records explicit approval or
+rejection; it does not infer either from the Report.
 
 Because the human approves the Report, `map-gate --approve` must fail when
 `04-map-report/index.html` is missing or stale relative to `page-model.json` and

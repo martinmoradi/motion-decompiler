@@ -3883,6 +3883,13 @@ function mapReportCommand(argv) {
 function parseMapGateArgs(argv) {
   const flags = {};
   const positionals = [];
+  function valueAfter(index, flag) {
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error(`map-gate ${flag} requires a value`);
+    }
+    return value;
+  }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--approve') {
@@ -3890,13 +3897,17 @@ function parseMapGateArgs(argv) {
     } else if (arg === '--reject') {
       flags.reject = true;
     } else if (arg === '--approve-exception') {
-      flags.approveException = argv[++i];
+      flags.approveException = valueAfter(i, arg);
+      i += 1;
     } else if (arg === '--note') {
-      flags.note = argv[++i];
+      flags.note = valueAfter(i, arg);
+      i += 1;
     } else if (arg === '--reason') {
-      flags.reason = argv[++i];
+      flags.reason = valueAfter(i, arg);
+      i += 1;
     } else if (arg === '--scope') {
-      flags.scope = argv[++i];
+      flags.scope = valueAfter(i, arg);
+      i += 1;
     } else if (arg === '--help' || arg === '-h') {
       flags.help = true;
     } else if (arg.startsWith('--')) {

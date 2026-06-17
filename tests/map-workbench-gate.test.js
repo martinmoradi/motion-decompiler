@@ -2,6 +2,7 @@
 'use strict';
 
 const { afterEach, expect, test } = require('bun:test');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -214,6 +215,10 @@ function runGate(cwd, args) {
   });
 }
 
+function sha256File(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
 test('yoinkit map-gate --approve records a blocked decision when required assertions fail', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
@@ -354,6 +359,63 @@ test('yoinkit map-gate --approve blocks incomplete required coverage rows', () =
   ]));
 });
 
+test('yoinkit map-gate --approve does not accept markdown-approved required coverage rows', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticCoverage: [{
+      area: 'region-hero crop',
+      required: true,
+      status: 'approved',
+      reason: 'markdown approval is not canonical',
+    }],
+    motionCoverage: [{
+      area: 'css transitions',
+      required: true,
+      status: 'exception',
+      reason: 'markdown exception is not canonical',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    staticMap: { incompleteRequired: 1 },
+    motionScout: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'region-hero crop', status: 'approved' }),
+    expect.objectContaining({ id: 'css transitions', status: 'exception' }),
+  ]));
+});
+
+test('yoinkit map-gate parses escaped pipes in coverage table cells', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticCoverage: [{
+      area: 'region-hero\\|crop',
+      name: 'Hero crop',
+      required: true,
+      status: 'missing',
+      evidence: 'transform\\|opacity',
+      reason: 'crop evidence is absent',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'region-hero|crop',
+      status: 'missing',
+      evidence: ['transform|opacity'],
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks uninspected required Motion Scout discovery sources', () => {
   const cwd = tempDir();
   const inspections = completeMotionInspections('desktop').map(row => (
@@ -477,6 +539,34 @@ test('yoinkit map-gate --approve-exception creates a canonical Page model except
     },
   });
   expect(gate.exceptionIds).toContain('exception-hero-crop');
+  expect(gate.inputHashes['page-model.json']).toBe(sha256File(path.join(config.runDir, 'page-model.json')));
+});
+
+test('yoinkit map-gate --approve-exception records freshness blockers when Report inputs are stale', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.notes.push({ id: 'note-after-report', text: 'This changed after Report v0.' });
+  writeJson(pageModelFile, model);
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-crop',
+    '--reason', 'Approved while noting stale Report inputs.',
+    '--scope', 'region:region-hero',
+  ]);
+
+  expect(result.status).toBe(0);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.decision).toBe('exception-approved');
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'page-model.json',
+      source: 'report-freshness',
+      status: 'stale',
+    }),
+  ]));
 });
 
 test('yoinkit map-gate --approve-exception rejects an unknown Region scope', () => {
@@ -629,6 +719,17 @@ test('yoinkit map-gate requires an explicit human decision', () => {
 
   expect(result.status).toBe(1);
   expect(result.stdout).toContain('yoinkit map-gate <run-dir>');
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
+test('yoinkit map-gate reports a precise error for missing value flags', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  const result = runGate(cwd, [config.runDir, '--approve', '--note']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('map-gate --note requires a value');
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
 
