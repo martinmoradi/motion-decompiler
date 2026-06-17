@@ -370,6 +370,33 @@ test('yoinkit map-gate --approve records a blocked decision when a Report input 
   ]));
 });
 
+test('yoinkit map-gate --approve blocks Report snapshots without input hashes', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const snapshotFile = path.join(mapReportDir(config.runDir), 'report-snapshot.json');
+  const snapshot = readJson(snapshotFile);
+  snapshot.inputHashes = {};
+  writeJson(snapshotFile, snapshot);
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Report v0 inputs are missing; rerun map-report');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.freshnessSummary).toMatchObject({
+    staleInputs: 0,
+    missingInputs: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'report-snapshot-input-hashes',
+      source: 'report-freshness',
+      status: 'missing',
+      message: 'Report v0 input hashes are missing; rerun map-report',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks incomplete required coverage rows', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
