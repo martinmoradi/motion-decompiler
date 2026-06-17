@@ -495,6 +495,33 @@ test('yoinkit map-gate --approve blocks Report snapshot input hashes that escape
   ]));
 });
 
+test('yoinkit map-gate --approve blocks contained Report snapshot input hashes outside the canonical input set', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const extraFile = path.join(motionScoutDir(config.runDir), 'extra.json');
+  writeJson(extraFile, { generatedAt: '2026-06-17T12:46:00.000Z' });
+  const snapshotFile = path.join(mapReportDir(config.runDir), 'report-snapshot.json');
+  const snapshot = readJson(snapshotFile);
+  snapshot.inputHashes['03-motion-scout/extra.json'] = sha256File(extraFile);
+  writeJson(snapshotFile, snapshot);
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('03-motion-scout/extra.json');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.freshnessSummary).toMatchObject({
+    unexpectedInputs: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '03-motion-scout/extra.json',
+      source: 'report-freshness',
+      status: 'unexpected',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks incomplete required coverage rows', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
