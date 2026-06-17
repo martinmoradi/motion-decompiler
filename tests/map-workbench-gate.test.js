@@ -1033,6 +1033,53 @@ test('yoinkit map-gate --approve-exception rejects cross-stage exception id coll
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
 
+test('yoinkit map-gate --approve-exception rejects cross-stage exception id collisions after same-stage duplicates', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.exceptions.push({
+    id: 'exception-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Map Gate owns this exception id.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  }, {
+    id: 'exception-hero-crop',
+    stage: 'capture',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Capture also owns this exception id.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:01:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:14:00.000Z') });
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-crop',
+    '--reason', 'Map Gate must reject duplicate cross-stage ids regardless of order.',
+    '--scope', 'region:region-hero',
+  ]);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('already exists for stage capture');
+  expect(readJson(pageModelFile).exceptions).toEqual([
+    expect.objectContaining({
+      id: 'exception-hero-crop',
+      stage: 'map-gate',
+      reason: 'Map Gate owns this exception id.',
+    }),
+    expect.objectContaining({
+      id: 'exception-hero-crop',
+      stage: 'capture',
+      reason: 'Capture also owns this exception id.',
+    }),
+  ]);
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
 test('yoinkit map-gate --approve-exception rejects unsupported scope kinds', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
