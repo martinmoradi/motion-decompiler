@@ -93,6 +93,17 @@ unknowns stay factual evidence: missing values are recorded as `null + reason`,
 not inferred tokens or implementation components. It does not create motion
 candidates, gate records, Report output, or implementation facts.
 
+Asset fetching is safe by default. Same-origin assets are fetched; `file:` and
+cross-origin assets are skipped, reported in `coverage.md`, and printed in the
+CLI summary without blocking unless strict mode is enabled. Trusted overrides are
+explicit and persisted into `00-config.json` before the stage runs:
+
+```bash
+./bin/yoinkit static-map "$RUN" --allow-file-assets --file-asset-root ./trusted-assets
+./bin/yoinkit static-map "$RUN" --fetch-public-cross-origin-assets
+./bin/yoinkit static-map "$RUN" --strict-skipped-assets
+```
+
 The legacy prototype commands remain available when you want to step through or
 rerun one capture phase:
 

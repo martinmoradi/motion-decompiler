@@ -191,6 +191,12 @@ from.
 - **Real headed browser for capture** (the tool handles this via
   `bin/capture-browser`). Map/plan also runs through the tool; just run from the
   repo root.
+- **Surface skipped Static Map assets.** `file:` and cross-origin assets are
+  skipped by default, shown in `02-static-map/coverage.md`, and printed by
+  `static-map`. Tell the user when skipped assets exist. Do not enable
+  `--allow-file-assets`, `--file-asset-root`, `--fetch-public-cross-origin-assets`,
+  or `--strict-skipped-assets` unless the human explicitly approves that override
+  for the run.
 - **Framework-agnostic, no per-site hardcoding.** The diagnosis subagent reasons
   from structure (the §2 `repairContext`), never from a hardcoded selector list.
 - **Don't commit captures.** `runs/` and `*.animation.json` are gitignored. Commit

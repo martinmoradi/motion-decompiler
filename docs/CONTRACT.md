@@ -542,17 +542,30 @@ viewport. The Region stores either a crop path or `null + reason`. A missing cro
 does not delete the Region, but it is a required Map Gate item unless marked out
 of scope or approved as an exception.
 
-Static Map v0 downloads assets for every present Region when they are
-same-origin or safely fetchable, stores them under `02-static-map/assets/`, and
-records `null + reason` for assets that cannot be fetched. These downloaded
-assets are evidence for judging visual balance and building the first prototype;
-they are not implementation tokens or a permanent promise to reuse source bytes.
-The browser probe identifies asset URLs and use context. Node-side stage code
-downloads assets, writes files, records hashes/paths/errors, and stores
-`null + reason` when a download is not available.
-Asset download failures block Map Gate only when the asset is visibly used in a
-required Region and the crop or Report cannot otherwise show that Region
-faithfully. Missing decorative, vendor, offscreen, or crop-covered assets are
+Static Map v0 downloads same-origin assets for every present Region when they
+are safely fetchable, stores them under `02-static-map/assets/`, and records
+hashes, dimensions, paths, errors, or `null + reason`. Unsafe sources are
+skipped by default, loudly and non-blockingly: `file:` assets are not read, and
+cross-origin assets are not fetched. Skipped evidence uses `status: "skipped"`
+with a reason, `gateImpact: "non-blocking"`, and a recovery flag. Missing
+same-origin required assets still block the Map Gate. Crops remain required
+because they prove what rendered even when source assets were not copied.
+
+Trusted overrides must be explicit. `--allow-file-assets --file-asset-root <dir>`
+allows local files only inside a trusted root after realpath, symlink escape,
+directory, size, and asset-type checks. `--fetch-public-cross-origin-assets`
+allows public HTTPS cross-origin fetches without browser credentials after DNS,
+private-address, redirect-target, timeout, redirect-count, and size checks.
+`--strict-skipped-assets` makes skipped required assets block instead of staying
+informational. Static Map flags are persisted into `00-config.json` before the
+stage runs so reruns are reproducible.
+
+These downloaded assets are evidence for judging visual balance and building the
+first prototype; they are not implementation tokens or a permanent promise to
+reuse source bytes. The browser probe identifies asset URLs and use context.
+Node-side stage code downloads assets, writes files, records hashes/paths/errors,
+and stores `null + reason` or `skipped + reason` when a download is not
+available. Missing decorative, vendor, offscreen, or crop-covered assets are
 info items or exception candidates, not blanket blockers.
 
 Static Map v0 records typography facts, including font family, size, weight,
@@ -798,7 +811,20 @@ Minimum Region v0 shape:
         "bytes": 12345,
         "dimensions": { "width": 640, "height": 360 },
         "required": true,
-        "severity": "required"
+        "severity": "required",
+        "gateImpact": "satisfied"
+      },
+      {
+        "selector": ".vendor-pixel",
+        "kind": "img",
+        "url": "https://vendor.example/pixel.gif",
+        "path": null,
+        "status": "skipped",
+        "reason": "cross-origin asset fetch disabled by default",
+        "required": false,
+        "severity": "info",
+        "gateImpact": "non-blocking",
+        "recovery": { "flag": "--fetch-public-cross-origin-assets" }
       }
     ],
     "layout": {}
