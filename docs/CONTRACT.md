@@ -62,6 +62,7 @@ yoink-runs/{slug}/
 │   └── assertions.json
 ├── 04-map-report/
 │   ├── index.html
+│   ├── report-snapshot.json
 │   └── gate.json
 ├── 05-capture/
 │   ├── passes/
@@ -92,6 +93,11 @@ second copy of the Page model.
 
 The Report and Spec are projections of `page-model.json`. They are never
 hand-authored in parallel.
+
+`04-map-report/report-snapshot.json` is the structured Report v0 projection
+captured at generation time for downstream consumption, such as `map-gate`
+reading hashes and summaries without scraping HTML. `page-model.json` remains
+canonical.
 
 Report Region placeholder positions and dimensions are derived from Region
 geometry in `page-model.json`. The Report must not store separate geometry or
@@ -950,6 +956,9 @@ The generated Report embeds the Page model projection, relevant assertion and
 coverage snapshots, and input freshness hashes directly in `index.html`, while
 linking crops and assets by relative path. `page-model.json` remains the source
 of truth; the embedded data is the Report projection at generation time.
+`map-report` also writes the same structured projection to
+`04-map-report/report-snapshot.json` so downstream tools can read it without
+scraping HTML.
 Dependencies and a Vite-style dev harness are allowed for authoring the Report
 renderer if they make development easier, but `map-report` must still emit a
 portable static artifact that can be opened without a running server.
