@@ -185,6 +185,17 @@ function extractSnapshot(html) {
 test('yoinkit map-report writes a portable static HTML projection with embedded snapshots and hashes', () => {
   const cwd = tempDir();
   const config = prepareReportRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const pageModel = readJson(pageModelFile);
+  const hero = pageModel.pages.home.regions.find(region => region.id === 'region-launch-faster');
+  hero.static.assets.push({
+    selector: 'main > section.hero img.escape',
+    kind: 'img',
+    path: '../../../etc/passwd',
+    status: 'copied',
+    required: false,
+  });
+  writeJson(pageModelFile, pageModel);
 
   const result = spawnSync(process.execPath, [BIN, 'map-report', config.runDir], {
     cwd,
@@ -211,6 +222,9 @@ test('yoinkit map-report writes a portable static HTML projection with embedded 
   expect(html).toContain('window.__yoinkitReportSetMode');
   expect(html).toContain('src="../02-static-map/crops/desktop/region-launch-faster.png"');
   expect(html).toContain('href="../02-static-map/assets/hero-logo.svg"');
+  expect(html).toContain('../../../etc/passwd');
+  expect(html).not.toMatch(/href="[^"]*etc\/passwd/);
+  expect(html).toContain('<strong>hash</strong>');
   expect(html).toContain('style="left:0px;top:72px;width:1280px;height:620px;"');
 
   const snapshot = extractSnapshot(html);
