@@ -850,6 +850,25 @@ test('yoinkit map-gate --approve-exception rejects an unknown Region scope', () 
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
 
+test('yoinkit map-gate --approve-exception rejects unsupported scope kinds', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-capture-scope',
+    '--reason', 'This unsupported scope should not be recorded.',
+    '--scope', 'capture:capture-hero-hover',
+  ]);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('only supports --scope region:<region-id> in v0');
+  expect(result.stderr).toContain('capture');
+  const page = readJson(path.join(config.runDir, 'page-model.json'));
+  expect(page.exceptions).toEqual([]);
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
 test('yoinkit map-gate --approve blocks unapproved Page model exceptions', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
