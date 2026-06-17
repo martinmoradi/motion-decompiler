@@ -293,9 +293,18 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
     reason: 'primary selector needs human confirmation',
   });
   pageModel.exceptions.push({
+    id: 'exception-approved-hero-asset',
+    stage: 'map-gate',
+    scope: 'region-launch-faster',
+    reason: 'approved hero asset exception should stay hidden',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  });
+  pageModel.exceptions.push({
     id: 'exception-hero-asset',
+    stage: 'map-gate',
+    scope: 'region-launch-faster',
     reason: 'hero asset needs human approval',
-    approved: false,
   });
   writeJson(pageModelFile, pageModel);
 
@@ -317,6 +326,7 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
   expect(html).toContain('02-static-map/assertions.json is older than 01-recon/page-state.json');
 
   const snapshot = extractSnapshot(html);
+  expect(snapshot.gateFindings.map(finding => finding.message)).not.toContain('approved hero asset exception should stay hidden');
   expect(snapshot.gateFindings.map(finding => finding.status)).toEqual(expect.arrayContaining([
     'fail',
     'incomplete',
