@@ -96,6 +96,7 @@ It's deliberately a single JS file; don't add build tooling without a real need.
 - Work from a feature branch by default, even for this personal repo. Use the
   `codex/` prefix unless Martin asks for another branch name.
 - Keep commits coherent and semantic.
+- Prefer rebase merges for PRs.
 - Don't commit local captures (`*.animation.json`) — they're gitignored.
 
 ## Agent skills
