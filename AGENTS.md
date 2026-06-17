@@ -96,7 +96,16 @@ It's deliberately a single JS file; don't add build tooling without a real need.
 - Work from a feature branch by default, even for this personal repo. Name it with
   a conventional type prefix matching the work — `docs/`, `feat/`, `fix/`, etc.
   (e.g. `feat/place-first-map`, `docs/product-architecture`).
-- Keep commits coherent and semantic.
+- Keep commits coherent, semantic, and reviewable. Prefer small chunks that match
+  how the work was built over one broad catch-all commit.
+- After the first commit for an assigned issue, push the branch and open a draft
+  PR against that issue so progress is visible early.
+- As issue checklist items are completed, update the GitHub issue checkboxes
+  instead of waiting until the end.
+- Before calling work done, update any relevant documentation, including the
+  README and the docs of record under `docs/`.
+- When implementation, verification, issue checkboxes, and docs are complete,
+  mark the draft PR as ready for review.
 - Prefer rebase merges for PRs.
 - Don't commit local captures (`*.animation.json`) — they're gitignored.
 
