@@ -282,10 +282,11 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
     failure: 'required hero image evidence is missing',
   });
   writeJson(staticAssertionsFile, staticAssertions);
-  fs.appendFileSync(
-    path.join(config.runDir, '02-static-map', 'coverage.md'),
-    '\n| region-launch-faster | asset evidence | required | incomplete | hero image missing |\n'
-  );
+
+  const motionAssertionsFile = path.join(config.runDir, '03-motion-scout', 'assertions.json');
+  const motionAssertions = readJson(motionAssertionsFile);
+  motionAssertions.generatedAt = '2026-06-17T12:00:00.000Z';
+  writeJson(motionAssertionsFile, motionAssertions);
 
   const pageModelFile = path.join(config.runDir, 'page-model.json');
   const pageModel = readJson(pageModelFile);
@@ -335,4 +336,50 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
     'candidate',
     'stale',
   ]));
+});
+
+test('Gate mode ignores the Motion Scout no-candidates placeholder row', () => {
+  const cwd = tempDir();
+  const config = prepareReportRun(cwd, {
+    motionMeasurement: { cssHovers: [], loops: [] },
+  });
+
+  const result = spawnSync(process.execPath, [BIN, 'map-report', config.runDir], {
+    cwd,
+    encoding: 'utf8',
+    timeout: CLI_TIMEOUT_MS,
+    env: process.env,
+  });
+
+  expect(result.status).toBe(0);
+  const html = fs.readFileSync(path.join(config.runDir, '04-map-report', 'index.html'), 'utf8');
+  const snapshot = extractSnapshot(html);
+  expect(snapshot.gateFindings).toEqual([]);
+  expect(html).toContain('No Map Gate blockers found in current Report inputs.');
+});
+
+test('Gate mode surfaces real Static Map missing coverage without duplicating assertion-backed rows', () => {
+  const cwd = tempDir();
+  const config = prepareReportRun(cwd, {
+    captureCrops: false,
+    motionMeasurement: { cssHovers: [], loops: [] },
+  });
+
+  const result = spawnSync(process.execPath, [BIN, 'map-report', config.runDir], {
+    cwd,
+    encoding: 'utf8',
+    timeout: CLI_TIMEOUT_MS,
+    env: process.env,
+  });
+
+  expect(result.status).toBe(0);
+  const html = fs.readFileSync(path.join(config.runDir, '04-map-report', 'index.html'), 'utf8');
+  const snapshot = extractSnapshot(html);
+  expect(snapshot.gateFindings).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: 'static-map-coverage',
+      status: 'missing',
+    }),
+  ]));
+  expect(snapshot.gateFindings.filter(finding => finding.id === 'static-map-region-launch-faster-desktop-crop')).toHaveLength(1);
 });
