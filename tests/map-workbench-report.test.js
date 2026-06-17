@@ -205,6 +205,8 @@ test('yoinkit map-report writes a portable static HTML projection with embedded 
   expect(html).toContain('data-mode="source"');
   expect(html).toContain('data-mode="region"');
   expect(html).toContain('data-mode="gate"');
+  expect(html).toContain('data-report-mode-toggle="source"');
+  expect(html).toContain('window.__yoinkitReportSetMode');
   expect(html).toContain('src="../02-static-map/crops/desktop/region-launch-faster.png"');
   expect(html).toContain('href="../02-static-map/assets/hero-logo.svg"');
   expect(html).toContain('style="left:0px;top:72px;width:1280px;height:620px;"');
