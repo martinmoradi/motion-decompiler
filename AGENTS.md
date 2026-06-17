@@ -112,4 +112,14 @@ Triage labels use a small GitHub workflow vocabulary, reusing existing `question
 
 ### Domain docs
 
-This is a single-context repo: read root `CONTEXT.md` and root `docs/adr/` when present. See `docs/agents/domain.md`.
+This is a single-context repo. Start with `docs/README.md`, then read the
+current docs of record it points to:
+
+- `CONTEXT.md`: project language and glossary.
+- `docs/ARCHITECTURE.md`: product shape and pipeline direction.
+- `docs/CONTRACT.md`: procedural run contract and Map workbench rules.
+- `docs/adr/`: accepted architectural decisions relevant to the work.
+- `docs/specs/`: current feature specs when they touch the task.
+
+Treat `docs/archive/legacy-capture-pipeline/` as historical background only. It
+is not the current agent contract. See `docs/agents/domain.md`.
