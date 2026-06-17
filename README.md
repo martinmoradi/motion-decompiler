@@ -66,11 +66,22 @@ For a fully automatic pass, accepting the proposed plan without review:
 ./bin/yoinkit yoink https://mammothmurals.com/
 ```
 
-The lower-level commands remain available when you want to step through or rerun
-one phase:
+Map workbench is in progress. The implemented stage-runner command is:
 
 ```bash
-./bin/yoinkit init https://mammothmurals.com/
+RUN="$(./bin/yoinkit init https://mammothmurals.com/)"
+```
+
+`init` materializes the run shell only: `00-config.json` and the minimal
+`page-model.json`, under `yoink-runs/<host>/<date>-<slug>/` unless `--run-dir`
+is supplied. It resolves viewport shorthand and the primary viewport, then
+stops. It does not open a browser, map the page, propose captures, or write
+later-stage artifacts.
+
+The legacy prototype commands remain available when you want to step through or
+rerun one capture phase:
+
+```bash
 ./bin/yoinkit map runs/mammothmurals.com/2026-06-15-run
 ./bin/yoinkit plan runs/mammothmurals.com/2026-06-15-run
 ./bin/yoinkit capture runs/mammothmurals.com/2026-06-15-run manifest.proposed.json
