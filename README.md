@@ -72,6 +72,7 @@ Map workbench is in progress. The implemented stage-runner commands are:
 RUN="$(./bin/yoinkit init https://mammothmurals.com/)"
 ./bin/yoinkit recon "$RUN"
 ./bin/yoinkit static-map "$RUN"
+./bin/yoinkit motion-scout "$RUN"
 ```
 
 `init` materializes the run shell only: `00-config.json` and the minimal
@@ -92,6 +93,16 @@ fetchable asset evidence, and updates only Static Map-owned Region fields in
 unknowns stay factual evidence: missing values are recorded as `null + reason`,
 not inferred tokens or implementation components. It does not create motion
 candidates, gate records, Report output, or implementation facts.
+
+`motion-scout` requires the Static Map Region scaffold, reads likely motion clues
+from the capture engine map plus runner-owned affordance probes, writes
+`03-motion-scout/motion-candidates.json`, assertions, and coverage, and attaches
+only candidate id references back to each Region. Candidate records are runnable
+leads for later Capture: trigger, target selector, Region attachment or
+`null + reason`, evidence source, recipe skeleton, viewport applicability, and a
+mechanical priority hint. They deliberately do not store measured duration,
+easing, from/to values, sampled timelines, capture ids, Signature importance, or
+implementation component/token names.
 
 Asset fetching is safe by default. Same-origin assets are fetched; `file:` and
 cross-origin assets are skipped, reported in `coverage.md`, and printed in the

@@ -20,6 +20,10 @@ const {
   createFixtureStaticMapDriver,
   runStaticMap: runMapWorkbenchStaticMap,
 } = require('../lib/map-workbench/static-map');
+const {
+  createFixtureMotionScoutDriver,
+  runMotionScout: runMapWorkbenchMotionScout,
+} = require('../lib/map-workbench/motion-scout');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -42,6 +46,7 @@ Usage:
   ${initUsageText()}
   bin/yoinkit recon <run-dir>
   bin/yoinkit static-map <run-dir>
+  bin/yoinkit motion-scout <run-dir>
   bin/yoinkit map <run-dir>
   bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
   bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
@@ -3838,6 +3843,26 @@ function staticMapCommand(argv) {
   printStaticMapEvidenceSummary(result);
 }
 
+function motionScoutDriverFromEnv(env = process.env) {
+  if (env.YOINKIT_MOTION_SCOUT_FIXTURE) return createFixtureMotionScoutDriver(env.YOINKIT_MOTION_SCOUT_FIXTURE);
+  return null;
+}
+
+function motionScoutCommand(argv) {
+  const { help, positionals } = parseRunDirOnlyArgs(argv, 'motion-scout');
+  if (help || positionals.length !== 1) {
+    console.log('yoinkit motion-scout <run-dir>');
+    process.exit(help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  const result = runMapWorkbenchMotionScout(runDir, { driver: motionScoutDriverFromEnv() });
+  console.log(`Motion Scout: ${result.status}`);
+  console.log(`Saved ${result.artifacts.candidates}`);
+  console.log(`Saved ${result.artifacts.assertions}`);
+  console.log(`Saved ${result.artifacts.coverage}`);
+  console.log(`Candidates: ${result.candidates.length}`);
+}
+
 function mapCommand(argv) {
   const { flags, positionals } = parseFlags(argv);
   if (flags.help || positionals.length !== 1) {
@@ -3980,6 +4005,7 @@ function main() {
   else if (command === 'init') initCommand(rest);
   else if (command === 'recon') reconCommand(rest);
   else if (command === 'static-map') staticMapCommand(rest);
+  else if (command === 'motion-scout') motionScoutCommand(rest);
   else if (command === 'map') mapCommand(rest);
   else if (command === 'plan') planCommand(rest);
   else if (command === 'capture') captureCommand(rest);
