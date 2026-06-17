@@ -696,7 +696,8 @@ function validCause(cause) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Capture-repair loop (Part 6 — design: docs/PART-5-repair-loop-design.md)
+// Capture-repair loop (Part 6 — historical design:
+// docs/archive/legacy-capture-pipeline/PART-5-repair-loop-design.md)
 //
 // The LLM decides WHAT/HOW/REPAIR; it NEVER measures motion. These structures
 // carry only selectors, action sequences, and a terminal verdict — there is no

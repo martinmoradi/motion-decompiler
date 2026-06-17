@@ -7,7 +7,8 @@ procedure. Run it only when `capture --repair-dump` left captures with a
 `repairInput` field in `<run>/capture-results.json`.
 
 Authoritative contracts: `references/repair-contracts.md` (§2/§3/§6) and, for the
-full rationale, `docs/PART-5-repair-loop-design.md`.
+historical rationale,
+`docs/archive/legacy-capture-pipeline/PART-5-repair-loop-design.md`.
 
 ## Setup
 

@@ -1,7 +1,8 @@
 # Repair contracts (condensed)
 
-The runtime-facing shapes for the repair loop. The authoritative source is
-`docs/PART-5-repair-loop-design.md` (§2 input, §3 output, §6 accounting); this is
+The runtime-facing shapes for the repair loop. The historical rationale is
+`docs/archive/legacy-capture-pipeline/PART-5-repair-loop-design.md` (§2 input,
+§3 output, §6 accounting); this is
 the operational summary. All three are produced/consumed by the tool — you rarely
 hand-write them, but you read them to drive the loop and to brief the subagent.
 

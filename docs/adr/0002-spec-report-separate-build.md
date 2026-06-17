@@ -21,7 +21,8 @@ motion against the Spec, with gate tightness driven by each item's `confidence`.
 The intuitive design is one end-to-end run that builds the components directly.
 We rejected it for two reasons. First, **context discipline**: making GSAP mid
 capture-run bloats the capture context; keeping build downstream keeps each phase
-clean. (Note: this refines [SPEC.md](../SPEC.md), whose "runnable code is a
+clean. (Note: this refines the historical
+[SPEC.md](../archive/legacy-capture-pipeline/SPEC.md), whose "runnable code is a
 non-goal" is true *of the capture pipeline* — the separate build phase is where
 code is produced.) Second, and more fundamental: **an agent is an unreliable
 judge of its own fidelity** — it stops too early. The same engine that creates

@@ -1,12 +1,11 @@
 # YoinkIt — Architecture (product design of record)
 
 This is the product-level north star: what YoinkIt is for, the unit of work, the
-pipeline shape, and how a yoink converges. It sits *above* the engine pipeline
-detail in [SPEC.md](./SPEC.md), the execution sequence in
-[ROADMAP.md](./ROADMAP.md), and the procedural run contract in
-[CONTRACT.md](./CONTRACT.md). Vocabulary used here is defined in
+pipeline shape, and how a yoink converges. It sits above the procedural run
+contract in [CONTRACT.md](./CONTRACT.md). Vocabulary used here is defined in
 [CONTEXT.md](../CONTEXT.md). Hard decisions behind it are recorded in
-[docs/adr/](./adr/).
+[docs/adr/](./adr/). Historical pre-Map-workbench specs and roadmaps are archived
+under [docs/archive/legacy-capture-pipeline/](./archive/legacy-capture-pipeline/).
 
 ## What YoinkIt is for
 

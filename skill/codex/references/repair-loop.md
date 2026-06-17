@@ -9,7 +9,8 @@ Do not track budget, retries, pending captures, or repeated-identical handling
 manually in prose.
 
 Authoritative contracts: `references/repair-contracts.md` (§2/§3/§6) and, for
-the full rationale, `docs/PART-5-repair-loop-design.md`.
+historical rationale,
+`docs/archive/legacy-capture-pipeline/PART-5-repair-loop-design.md`.
 
 ## 1. Initialize coordinator state
 
