@@ -5,7 +5,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { parseInitArgs, usageText: initUsageText } = require('../lib/map-workbench/config');
+const {
+  applyAssetPolicyOptions,
+  parseInitArgs,
+  usageText: initUsageText,
+} = require('../lib/map-workbench/config');
 const { initRun: initMapWorkbenchRun } = require('../lib/map-workbench/init');
 const {
   ReconBlockedError,
@@ -3737,6 +3741,39 @@ function parseRunDirOnlyArgs(argv, command) {
   return { help, positionals };
 }
 
+function parseStaticMapArgs(argv) {
+  const positionals = [];
+  const assetOptions = {};
+  let help = false;
+  let hasAssetOptions = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--help' || arg === '-h') {
+      help = true;
+    } else if (arg === '--allow-file-assets') {
+      assetOptions.allowFileAssets = true;
+      hasAssetOptions = true;
+    } else if (arg === '--file-asset-root') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) throw new Error('--file-asset-root requires a value');
+      assetOptions.fileAssetRoot = value;
+      hasAssetOptions = true;
+      i += 1;
+    } else if (arg === '--fetch-public-cross-origin-assets') {
+      assetOptions.fetchPublicCrossOriginAssets = true;
+      hasAssetOptions = true;
+    } else if (arg === '--strict-skipped-assets') {
+      assetOptions.strictSkippedAssets = true;
+      hasAssetOptions = true;
+    } else if (arg.startsWith('--')) {
+      throw new Error(`Unknown static-map option: ${arg}`);
+    } else {
+      positionals.push(arg);
+    }
+  }
+  return { help, positionals, assetOptions, hasAssetOptions };
+}
+
 function reconDriverFromEnv(env = process.env) {
   if (env.YOINKIT_RECON_FIXTURE) return createFixtureReconDriver(env.YOINKIT_RECON_FIXTURE);
   return null;
@@ -3762,18 +3799,43 @@ function staticMapDriverFromEnv(env = process.env) {
   return null;
 }
 
+function plural(count, singular, pluralValue = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : pluralValue}`;
+}
+
+function printStaticMapEvidenceSummary(result) {
+  const skipped = result.summary && result.summary.skippedAssets;
+  if (skipped && skipped.total > 0) {
+    console.log('Skipped assets:');
+    if (skipped.crossOrigin) console.log(`- ${plural(skipped.crossOrigin, 'cross-origin asset')} ${skipped.crossOrigin === 1 ? 'was' : 'were'} not copied`);
+    if (skipped.file) console.log(`- ${plural(skipped.file, 'file asset')} ${skipped.file === 1 ? 'was' : 'were'} blocked`);
+    if (skipped.other) console.log(`- ${plural(skipped.other, 'asset')} ${skipped.other === 1 ? 'was' : 'were'} skipped`);
+  }
+  const crops = result.summary && result.summary.crops;
+  if (crops && crops.present > 0) {
+    if (crops.missing === 0) console.log('Crops were captured for all present regions.');
+    else console.log(`${plural(crops.missing, 'crop')} could not be captured for present regions.`);
+  }
+}
+
 function staticMapCommand(argv) {
-  const { help, positionals } = parseRunDirOnlyArgs(argv, 'static-map');
+  const { help, positionals, assetOptions, hasAssetOptions } = parseStaticMapArgs(argv);
   if (help || positionals.length !== 1) {
-    console.log('yoinkit static-map <run-dir>');
+    console.log('yoinkit static-map <run-dir> [--allow-file-assets --file-asset-root DIR] [--fetch-public-cross-origin-assets] [--strict-skipped-assets]');
     process.exit(help ? 0 : 1);
   }
   const runDir = path.resolve(positionals[0]);
+  if (hasAssetOptions) {
+    const configFile = path.join(runDir, '00-config.json');
+    const config = readJson(configFile);
+    writeJson(configFile, applyAssetPolicyOptions(config, assetOptions, { cwd: process.cwd() }));
+  }
   const result = runMapWorkbenchStaticMap(runDir, { driver: staticMapDriverFromEnv() });
   console.log(`Static Map: ${result.status}`);
   console.log(`Saved ${result.artifacts.measurements}`);
   console.log(`Saved ${result.artifacts.assertions}`);
   console.log(`Saved ${result.artifacts.coverage}`);
+  printStaticMapEvidenceSummary(result);
 }
 
 function mapCommand(argv) {
