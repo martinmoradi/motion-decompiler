@@ -254,6 +254,33 @@ test('yoinkit map-gate --approve blocks stale Report v0 inputs', () => {
   ]));
 });
 
+test('yoinkit map-gate --approve records a blocked decision when a Report input is missing', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  fs.rmSync(path.join(motionScoutDir(config.runDir), 'coverage.md'));
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Report v0 inputs are missing; rerun map-report');
+  expect(result.stderr).toContain('03-motion-scout/coverage.md');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate).toMatchObject({
+    decision: 'blocked',
+    freshnessSummary: {
+      staleInputs: 0,
+      missingInputs: 1,
+    },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '03-motion-scout/coverage.md',
+      source: 'report-freshness',
+      status: 'missing',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks incomplete required coverage rows', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
