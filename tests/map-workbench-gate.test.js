@@ -282,6 +282,37 @@ test('yoinkit map-gate --approve records a blocked decision when required assert
   expect(readJson(path.join(config.runDir, 'page-model.json'))).toEqual(pageModelBefore);
 });
 
+test('yoinkit map-gate --approve blocks required assertions that are not pass', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    motionAssertions: [{
+      id: 'motion-scout-required-discovery-matrix',
+      kind: 'discovery-coverage',
+      required: true,
+      status: 'missing',
+      evidence: ['motion-candidates.json omitted a required source'],
+      failure: 'required discovery matrix is incomplete',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('motion-scout-required-discovery-matrix');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.assertionSummary).toMatchObject({
+    failedRequired: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'motion-scout-required-discovery-matrix',
+      source: 'motion-scout-assertions',
+      status: 'missing',
+      message: 'required discovery matrix is incomplete',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks stale Report v0 inputs', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
