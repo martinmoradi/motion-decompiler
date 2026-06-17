@@ -279,6 +279,79 @@ test('static-map keeps generated selectors as evidence instead of Region identit
   });
 });
 
+test('static-map treats nth-of-type selectors as unstable primary selector evidence', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:27:00.000Z'),
+  });
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section:nth-of-type(2)',
+              selectors: ['main > section:nth-of-type(2)'],
+              semantic: { tagName: 'section', heading: 'Feature' },
+              rect: { x: 0, y: 120, width: 1280, height: 360 },
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:07:00.000Z'),
+  });
+
+  expect(result.regions[0].source.primarySelector).toBe(null);
+  expect(result.regions[0].source.selectors).toEqual(['main > section:nth-of-type(2)']);
+  expect(result.regions[0].unknowns).toContainEqual({
+    field: 'source.primarySelector',
+    reason: 'no stable primary selector was measured for this Region',
+  });
+});
+
+test('static-map measures the effective Recon URL for retargeted iframe runs', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  const shellUrl = 'https://example.com/shell';
+  const iframeUrl = 'https://example.com/embed';
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({
+      desktop: readyReconSnapshot({
+        finalUrl: shellUrl,
+        effectiveUrl: iframeUrl,
+        retargetedFrom: shellUrl,
+        title: 'Embedded app',
+      }),
+    }),
+    now: new Date('2026-06-17T12:28:00.000Z'),
+  });
+
+  const measuredUrls = [];
+  runStaticMap(config.runDir, {
+    driver: {
+      measure(targetUrl) {
+        measuredUrls.push(targetUrl);
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Embedded hero' },
+              rect: { x: 0, y: 0, width: 1280, height: 500 },
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:08:00.000Z'),
+  });
+
+  expect(measuredUrls).toEqual([iframeUrl]);
+});
+
 test('static-map merges tiny candidates into the surrounding page outline', () => {
   const cwd = tempDir();
   const config = createRun(cwd);
@@ -328,6 +401,105 @@ test('static-map merges tiny candidates into the surrounding page outline', () =
 
   const measurements = readJson(path.join(config.runDir, '02-static-map', 'measurements.json'));
   expect(measurements.viewports[0].rawCandidates).toHaveLength(4);
+});
+
+test('static-map collapses overlapping parent and child structural candidates', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:32:00.000Z'),
+  });
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main',
+              semantic: { tagName: 'main', heading: 'Launch faster' },
+              rect: { x: 0, y: 80, width: 1280, height: 620 },
+            }),
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              rect: { x: 0, y: 80, width: 1280, height: 620 },
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:12:00.000Z'),
+  });
+
+  expect(result.regions.map(region => region.id)).toEqual(['region-launch-faster']);
+  expect(result.regions[0].source.selectors).toContain('main > section.hero');
+});
+
+test('static-map seeds Regions from the union of viewport candidates', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd, {
+    viewports: ['desktop=1280x800', 'mobile=390x844'],
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({
+      desktop: readyReconSnapshot(),
+      mobile: readyReconSnapshot({
+        dimensions: {
+          scrollWidth: 390,
+          scrollHeight: 1800,
+          clientWidth: 390,
+          clientHeight: 844,
+        },
+        viewport: { width: 390, height: 844, devicePixelRatio: 2 },
+      }),
+    }),
+    now: new Date('2026-06-17T12:33:00.000Z'),
+  });
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure(targetUrl, viewport) {
+        if (viewport.id === 'desktop') {
+          return {
+            candidates: [
+              measuredCandidate({
+                selector: 'section.desktop-panel',
+                semantic: { tagName: 'section', heading: 'Desktop panel' },
+                rect: { x: 0, y: 100, width: 1280, height: 420 },
+              }),
+            ],
+          };
+        }
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'section.mobile-panel',
+              semantic: { tagName: 'section', heading: 'Mobile panel' },
+              rect: { x: 0, y: 70, width: 390, height: 360 },
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:13:00.000Z'),
+  });
+
+  expect(result.regions.map(region => region.id)).toEqual([
+    'region-desktop-panel',
+    'region-mobile-panel',
+  ]);
+  expect(result.regions[0].viewports.desktop.presence).toBe('present');
+  expect(result.regions[0].viewports.mobile.presence).toBe('absent');
+  expect(result.regions[1].viewports.desktop.presence).toBe('absent');
+  expect(result.regions[1].viewports.mobile.presence).toBe('present');
+
+  const assertions = readJson(path.join(config.runDir, '02-static-map', 'assertions.json'));
+  expect(assertions.assertions.every(assertion => assertion.status === 'pass')).toBe(true);
+
+  const coverage = fs.readFileSync(path.join(config.runDir, '02-static-map', 'coverage.md'), 'utf8');
+  expect(coverage).toContain('| region-mobile-panel | Mobile panel | required | complete | mobile |');
 });
 
 test('yoinkit static-map runs the Static Map stage from completed Recon inputs', () => {

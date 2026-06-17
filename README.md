@@ -71,6 +71,7 @@ Map workbench is in progress. The implemented stage-runner commands are:
 ```bash
 RUN="$(./bin/yoinkit init https://mammothmurals.com/)"
 ./bin/yoinkit recon "$RUN"
+./bin/yoinkit static-map "$RUN"
 ```
 
 `init` materializes the run shell only: `00-config.json` and the minimal
@@ -83,6 +84,11 @@ later-stage artifacts.
 `01-recon/` evidence, and updates only Recon-owned page-level facts in
 `page-model.json`. It does not create Regions, motion candidates, Report output,
 or later-stage artifacts.
+
+`static-map` requires completed Recon evidence, measures section-level Regions,
+writes `02-static-map/` measurements, assertions, and coverage, and updates only
+Static Map-owned Region fields in `page-model.json`. It does not create motion
+candidates, gate records, Report output, or implementation facts.
 
 The legacy prototype commands remain available when you want to step through or
 rerun one capture phase:
