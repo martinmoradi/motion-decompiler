@@ -25,6 +25,7 @@ const {
   runMotionScout: runMapWorkbenchMotionScout,
 } = require('../lib/map-workbench/motion-scout');
 const { runMapReport: runMapWorkbenchMapReport } = require('../lib/map-workbench/map-report');
+const { runMapGate: runMapWorkbenchMapGate } = require('../lib/map-workbench/map-gate');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -49,6 +50,9 @@ Usage:
   bin/yoinkit static-map <run-dir>
   bin/yoinkit motion-scout <run-dir>
   bin/yoinkit map-report <run-dir>
+  bin/yoinkit map-gate <run-dir> --approve [--note "..."]
+  bin/yoinkit map-gate <run-dir> --reject --reason "..."
+  bin/yoinkit map-gate <run-dir> --approve-exception <exception-id> --reason "..." --scope <kind:id>
   bin/yoinkit map <run-dir>
   bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
   bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
@@ -3876,6 +3880,61 @@ function mapReportCommand(argv) {
   console.log(result.artifacts.report);
 }
 
+function parseMapGateArgs(argv) {
+  const flags = {};
+  const positionals = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--approve') {
+      flags.approve = true;
+    } else if (arg === '--reject') {
+      flags.reject = true;
+    } else if (arg === '--approve-exception') {
+      flags.approveException = argv[++i];
+    } else if (arg === '--note') {
+      flags.note = argv[++i];
+    } else if (arg === '--reason') {
+      flags.reason = argv[++i];
+    } else if (arg === '--scope') {
+      flags.scope = argv[++i];
+    } else if (arg === '--help' || arg === '-h') {
+      flags.help = true;
+    } else if (arg.startsWith('--')) {
+      throw new Error(`Unknown option: ${arg}`);
+    } else {
+      positionals.push(arg);
+    }
+  }
+  return { flags, positionals };
+}
+
+function mapGateCommand(argv) {
+  const { flags, positionals } = parseMapGateArgs(argv);
+  const decisionCount = (flags.approve ? 1 : 0) + (flags.reject ? 1 : 0) + (flags.approveException ? 1 : 0);
+  if (flags.help || positionals.length !== 1 || decisionCount !== 1) {
+    console.log('yoinkit map-gate <run-dir> (--approve [--note "..."] | --reject --reason "..." | --approve-exception <exception-id> --reason "..." --scope <kind:id>)');
+    process.exit(flags.help ? 0 : 1);
+  }
+  if (flags.reject && !(typeof flags.reason === 'string' && flags.reason.trim())) {
+    throw new Error('map-gate --reject requires --reason with a human-readable reason');
+  }
+  if (flags.approveException && !(typeof flags.reason === 'string' && flags.reason.trim())) {
+    throw new Error('map-gate --approve-exception requires --reason with a human-readable reason');
+  }
+  if (flags.approveException && !(typeof flags.scope === 'string' && flags.scope.trim())) {
+    throw new Error('map-gate --approve-exception requires --scope <kind:id>');
+  }
+  const runDir = path.resolve(positionals[0]);
+  const gate = runMapWorkbenchMapGate(runDir, {
+    action: flags.approveException ? 'approve-exception' : (flags.reject ? 'reject' : 'approve'),
+    note: flags.note,
+    reason: flags.reason,
+    exceptionId: flags.approveException,
+    scope: flags.scope,
+  });
+  console.log(gate.artifacts.gate);
+}
+
 function mapCommand(argv) {
   const { flags, positionals } = parseFlags(argv);
   if (flags.help || positionals.length !== 1) {
@@ -4020,6 +4079,7 @@ function main() {
   else if (command === 'static-map') staticMapCommand(rest);
   else if (command === 'motion-scout') motionScoutCommand(rest);
   else if (command === 'map-report') mapReportCommand(rest);
+  else if (command === 'map-gate') mapGateCommand(rest);
   else if (command === 'map') mapCommand(rest);
   else if (command === 'plan') planCommand(rest);
   else if (command === 'capture') captureCommand(rest);

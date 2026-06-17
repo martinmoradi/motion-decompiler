@@ -74,6 +74,7 @@ RUN="$(./bin/yoinkit init https://mammothmurals.com/)"
 ./bin/yoinkit static-map "$RUN"
 ./bin/yoinkit motion-scout "$RUN"
 REPORT="$(./bin/yoinkit map-report "$RUN")"
+./bin/yoinkit map-gate "$RUN" --approve --note "Report v0 approved for Capture"
 ```
 
 `init` materializes the run shell only: `00-config.json` and the minimal
@@ -112,6 +113,23 @@ the same structured snapshot embedded in the HTML, for programmatic consumers.
 The HTML embeds the Page model projection, assertion and coverage snapshots,
 motion candidates, and input hashes, while linking crops and copied asset
 evidence by relative path. It does not open a browser by default.
+
+Review the Report before crossing into Capture. `map-gate` records the explicit
+human decision in `04-map-report/gate.json`; it never decides approval by itself.
+Final approval requires a fresh Report v0, passing required assertions, complete
+required coverage, reasoned unknowns, and approved blocking exceptions:
+
+```bash
+./bin/yoinkit map-gate "$RUN" --approve --note "Report v0 approved for Capture"
+./bin/yoinkit map-gate "$RUN" --reject --reason "Hero crop needs another pass"
+./bin/yoinkit map-gate "$RUN" --approve-exception exception-hero-crop \
+  --reason "Cookie banner is source-owned and accepted for Map v0" \
+  --scope region:region-hero
+```
+
+Approving an exception stores a canonical human-approved exception in
+`page-model.json` and records it in `gate.json`, but it is not final gate
+approval. Run `map-gate --approve` afterward when the Report is ready.
 
 Asset fetching is safe by default. Same-origin assets are fetched; `file:` and
 cross-origin assets are skipped, reported in `coverage.md`, and printed in the
