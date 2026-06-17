@@ -7,6 +7,11 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { parseInitArgs, usageText: initUsageText } = require('../lib/map-workbench/config');
 const { initRun: initMapWorkbenchRun } = require('../lib/map-workbench/init');
+const {
+  ReconBlockedError,
+  createFixtureReconDriver,
+  runRecon: runMapWorkbenchRecon,
+} = require('../lib/map-workbench/recon');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -27,6 +32,7 @@ Usage:
   bin/yoinkit yoink <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--max-hover-captures 10] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
   bin/yoinkit yoink <run-dir> [manifest.json] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
   ${initUsageText()}
+  bin/yoinkit recon <run-dir>
   bin/yoinkit map <run-dir>
   bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
   bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
@@ -3715,6 +3721,37 @@ function initCommand(argv) {
   console.log(config.runDir);
 }
 
+function parseRunDirOnlyArgs(argv, command) {
+  const positionals = [];
+  let help = false;
+  for (const arg of argv) {
+    if (arg === '--help' || arg === '-h') help = true;
+    else if (arg.startsWith('--')) throw new Error(`Unknown ${command} option: ${arg}`);
+    else positionals.push(arg);
+  }
+  return { help, positionals };
+}
+
+function reconDriverFromEnv(env = process.env) {
+  if (env.YOINKIT_RECON_FIXTURE) return createFixtureReconDriver(env.YOINKIT_RECON_FIXTURE);
+  return null;
+}
+
+function reconCommand(argv) {
+  const { help, positionals } = parseRunDirOnlyArgs(argv, 'recon');
+  if (help || positionals.length !== 1) {
+    console.log('yoinkit recon <run-dir>');
+    process.exit(help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  const result = runMapWorkbenchRecon(runDir, { driver: reconDriverFromEnv() });
+  console.log(`Recon: ${result.status}`);
+  console.log(`Saved ${result.artifacts.pageState}`);
+  console.log(`Saved ${result.artifacts.viewportManifest}`);
+  console.log(`Saved ${result.artifacts.sourceMetadata}`);
+  if (result.status === 'blocked') throw new ReconBlockedError(result);
+}
+
 function mapCommand(argv) {
   const { flags, positionals } = parseFlags(argv);
   if (flags.help || positionals.length !== 1) {
@@ -3855,6 +3892,7 @@ function main() {
   if (command === 'scout') scoutCommand(rest);
   else if (command === 'yoink') yoinkCommand(rest);
   else if (command === 'init') initCommand(rest);
+  else if (command === 'recon') reconCommand(rest);
   else if (command === 'map') mapCommand(rest);
   else if (command === 'plan') planCommand(rest);
   else if (command === 'capture') captureCommand(rest);
