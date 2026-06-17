@@ -24,6 +24,7 @@ const {
   createFixtureMotionScoutDriver,
   runMotionScout: runMapWorkbenchMotionScout,
 } = require('../lib/map-workbench/motion-scout');
+const { runMapReport: runMapWorkbenchMapReport } = require('../lib/map-workbench/map-report');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -47,6 +48,7 @@ Usage:
   bin/yoinkit recon <run-dir>
   bin/yoinkit static-map <run-dir>
   bin/yoinkit motion-scout <run-dir>
+  bin/yoinkit map-report <run-dir>
   bin/yoinkit map <run-dir>
   bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
   bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
@@ -3863,6 +3865,17 @@ function motionScoutCommand(argv) {
   console.log(`Candidates: ${result.candidates?.length || 0}`);
 }
 
+function mapReportCommand(argv) {
+  const { help, positionals } = parseRunDirOnlyArgs(argv, 'map-report');
+  if (help || positionals.length !== 1) {
+    console.log('yoinkit map-report <run-dir>');
+    process.exit(help ? 0 : 1);
+  }
+  const runDir = path.resolve(positionals[0]);
+  const result = runMapWorkbenchMapReport(runDir);
+  console.log(result.artifacts.report);
+}
+
 function mapCommand(argv) {
   const { flags, positionals } = parseFlags(argv);
   if (flags.help || positionals.length !== 1) {
@@ -4006,6 +4019,7 @@ function main() {
   else if (command === 'recon') reconCommand(rest);
   else if (command === 'static-map') staticMapCommand(rest);
   else if (command === 'motion-scout') motionScoutCommand(rest);
+  else if (command === 'map-report') mapReportCommand(rest);
   else if (command === 'map') mapCommand(rest);
   else if (command === 'plan') planCommand(rest);
   else if (command === 'capture') captureCommand(rest);
