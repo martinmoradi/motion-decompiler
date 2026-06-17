@@ -16,6 +16,17 @@ const { runMotionScout } = require('../lib/map-workbench/motion-scout');
 const BIN = path.join(__dirname, '..', 'bin', 'yoinkit');
 const CLI_TIMEOUT_MS = 10000;
 const tempDirs = new Set();
+const REQUIRED_MOTION_DISCOVERY_SOURCES = [
+  'css-transition-hover',
+  'hover-affordance',
+  'css-keyframes',
+  'css-keyframes-loop',
+  'split-reveal-dom',
+  'scroll-trigger-registry',
+  'sticky-pinned-clue',
+  'click-affordance',
+  'cursor-affordance',
+];
 
 afterEach(() => {
   for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
@@ -99,11 +110,20 @@ function writeTinyPng(file) {
   ));
 }
 
+function completeMotionInspections() {
+  return REQUIRED_MOTION_DISCOVERY_SOURCES.map(source => ({
+    source,
+    status: 'complete',
+    evidence: `${source} inspected`,
+  }));
+}
+
 function prepareReportRun(cwd, options = {}) {
   const captureCrops = options.captureCrops !== false;
   const motionMeasurement = options.motionMeasurement || {
     cssHovers: [{ sel: 'main > section.hero a.cta', prop: 'transform' }],
     loops: [{ sel: 'main > section.hero .orbital' }],
+    sourceInspections: completeMotionInspections(),
   };
   const config = createRun(cwd, {
     viewports: ['desktop=1280x800', 'mobile=390x844'],
@@ -154,8 +174,11 @@ function prepareReportRun(cwd, options = {}) {
   });
   runMotionScout(config.runDir, {
     driver: {
-      measure() {
-        return JSON.parse(JSON.stringify(motionMeasurement));
+      measure(targetUrl, viewport) {
+        const measurement = typeof motionMeasurement === 'function'
+          ? motionMeasurement(viewport)
+          : motionMeasurement;
+        return JSON.parse(JSON.stringify(measurement));
       },
     },
     now: new Date('2026-06-17T12:45:00.000Z'),
@@ -381,7 +404,7 @@ test('Gate mode surfaces failed, unknown, unapproved exception, stale, and candi
 test('Gate mode ignores the Motion Scout no-candidates placeholder row', () => {
   const cwd = tempDir();
   const config = prepareReportRun(cwd, {
-    motionMeasurement: { cssHovers: [], loops: [] },
+    motionMeasurement: { cssHovers: [], loops: [], sourceInspections: completeMotionInspections() },
   });
 
   const result = spawnSync(process.execPath, [BIN, 'map-report', config.runDir], {
@@ -402,7 +425,7 @@ test('Gate mode surfaces real Static Map missing coverage without duplicating as
   const cwd = tempDir();
   const config = prepareReportRun(cwd, {
     captureCrops: false,
-    motionMeasurement: { cssHovers: [], loops: [] },
+    motionMeasurement: { cssHovers: [], loops: [], sourceInspections: completeMotionInspections() },
   });
 
   const result = spawnSync(process.execPath, [BIN, 'map-report', config.runDir], {
