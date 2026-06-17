@@ -192,6 +192,11 @@ implementation. It is binary: required assertions pass, [[Static Map]] coverage
 is complete, [[Motion Scout]] discovery coverage is complete, unknowns are
 recorded honestly, and exceptions proceed only when human-approved.
 
+**Map workbench**:
+The deterministic pre-Capture workspace for proving [[Recon]], [[Static Map]],
+[[Motion Scout]], [[Report]] v0, and [[Map Gate]] artifacts for a run. It is not
+[[Capture]], [[Spec]], or implementation, and it does not make product judgments.
+
 **Region placeholder**:
 The Report's static visual stand-in for a [[Region]] before implementation. It
 has the Region's measured position, shape, and dimensions, plus static visual

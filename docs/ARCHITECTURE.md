@@ -388,8 +388,10 @@ Scoped to one landing page. The approach is **tracer-bullet** — prove the whol
 loop on *one* Region before building breadth — with the Report front-loaded
 because legibility (not breadth) was the blocker:
 
-1. **Place-first Map, single viewport** — the Page-model skeleton (regions +
-   rects + crops + assets) everything hangs on. Multi-viewport deferred.
+1. **Place-first Map, primary viewport first** — the Page-model skeleton
+   (regions + rects + crops + assets) everything hangs on. The schema is already
+   multi-viewport, but the first workbench slice only has to measure the primary
+   viewport unless a run explicitly requests additional viewports.
 2. **Report v0, before capture** — render the dimensional scaffold with region
    overlays and gaps from *just the map*. Highest-leverage early win: you can
    *see* and validate the referent before any motion work. This is the first
