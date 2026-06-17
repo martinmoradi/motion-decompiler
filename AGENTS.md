@@ -1,8 +1,8 @@
 # YoinkIt — agent guide
 
 This file is for agents working **on** this repo. End users *yoinking a site*
-use the Codex skill in `skill/codex/` (read its `SKILL.md`); this guide is about
-the tool itself.
+use the Codex skill in `skill/codex/` or the Claude skill in `skill/claude/`
+(read its `SKILL.md`); this guide is about the tool itself.
 
 YoinkIt captures what a web animation *actually does* (by sampling
 computed style per frame) and emits an **agent-ready spec, not code**. A coding
@@ -73,12 +73,12 @@ extension/snippet use can still call plain `dump()` to copy JSON.
 
 The pipeline is defined against ~6 browser primitives (`open`, `evalJS`,
 `realHover`, `realScroll`, `realClick`, `wait`) so it's driver-agnostic. Each
-environment supplies a thin adapter: Codex = agent-browser (map) +
-Codex-in-chrome MCP (capture); Codex = agent-browser + its in-app Chrome;
-minimal = one real browser (agent-browser `--auto-connect`/`--headed`, or
+environment supplies a thin adapter: Codex and Claude can both use
+agent-browser for map, then a real visible browser for capture. Minimal setups
+can use one real browser (agent-browser `--auto-connect`/`--headed`, or
 CDP/Playwright headed) for both. The recipe and manifest schema are identical
-across drivers — only the adapter changes. Adapters live in
-`skill/codex/references/drivers/`.
+across drivers; only the adapter changes. Harness-specific instructions live in
+`skill/codex/` and `skill/claude/`.
 
 ## Working on the engine
 
