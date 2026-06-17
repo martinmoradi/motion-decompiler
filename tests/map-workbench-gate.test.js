@@ -390,6 +390,80 @@ test('yoinkit map-gate --approve does not accept markdown-approved required cove
   ]));
 });
 
+test('yoinkit map-gate --approve blocks reasonless out-of-scope required coverage rows', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticCoverage: [{
+      area: 'region-hero crop',
+      required: true,
+      status: 'out_of_scope',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    staticMap: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'region-hero crop',
+      source: 'static-map-coverage',
+      status: 'out_of_scope',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve accepts out-of-scope required coverage rows with reasons', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticCoverage: [{
+      area: 'region-hero crop',
+      required: true,
+      status: 'out_of_scope',
+      reason: 'Region is hidden behind a source-owned cookie banner for this run',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(0);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    staticMap: { incompleteRequired: 0 },
+  });
+  expect(gate.blockers).toEqual([]);
+});
+
+test('yoinkit map-gate --approve blocks required info coverage rows', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticCoverage: [{
+      area: 'region-hero crop',
+      required: true,
+      status: 'info',
+      reason: 'Informational notes do not satisfy required coverage',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    staticMap: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'region-hero crop',
+      source: 'static-map-coverage',
+      status: 'info',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate parses escaped pipes in coverage table cells', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
