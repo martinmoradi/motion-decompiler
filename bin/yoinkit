@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { parseInitArgs, usageText: initUsageText } = require('../lib/map-workbench/config');
+const { initRun: initMapWorkbenchRun } = require('../lib/map-workbench/init');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -24,7 +26,7 @@ Usage:
   bin/yoinkit scout <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--max-hover-captures 10] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
   bin/yoinkit yoink <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--max-hover-captures 10] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
   bin/yoinkit yoink <run-dir> [manifest.json] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
-  bin/yoinkit init <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--no-open]
+  ${initUsageText()}
   bin/yoinkit map <run-dir>
   bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
   bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
@@ -3704,20 +3706,13 @@ function buildReport(runDir) {
 }
 
 function initCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
+  const options = parseInitArgs(argv);
+  if (options.help) {
+    console.log(initUsageText());
+    return;
   }
-  const url = positionals[0];
-  const viewport = flags.viewport || DEFAULT_VIEWPORT;
-  const runDir = runDirFor(url, flags);
-  ensureRunDir(runDir);
-  const manifest = { url, viewport, captures: [] };
-  writeJson(path.join(runDir, 'manifest.json'), manifest);
-  appendLog(runDir, `Initialized run for ${url}`);
-  if (!flags.noOpen) openPage(runDir, url, viewport, [ENGINE]);
-  console.log(runDir);
+  const config = initMapWorkbenchRun(options, { cwd: process.cwd() });
+  console.log(config.runDir);
 }
 
 function mapCommand(argv) {
