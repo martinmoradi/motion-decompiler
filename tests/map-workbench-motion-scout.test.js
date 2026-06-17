@@ -4,6 +4,7 @@ const { afterEach, expect, test } = require('bun:test');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 const { spawnSync } = require('child_process');
 
 const { initRun } = require('../lib/map-workbench/init');
@@ -183,6 +184,33 @@ function completeMotionInspections(viewportId = 'desktop') {
   }));
 }
 
+function runProbeWithMap(base) {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'probes', 'motion-scout-probe.js'), 'utf8');
+  const sandbox = {
+    window: {
+      __cap: {
+        map() {
+          return JSON.parse(JSON.stringify(base));
+        },
+      },
+    },
+    document: {
+      querySelectorAll() {
+        return [];
+      },
+    },
+    getComputedStyle() {
+      return {};
+    },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.window.document = sandbox.document;
+  sandbox.window.getComputedStyle = sandbox.getComputedStyle;
+  sandbox.window.CSS = null;
+  vm.runInNewContext(source, sandbox);
+  return sandbox.window.__yoinkitMotionScoutProbe();
+}
+
 test('motion-scout requires a completed Static Map Region scaffold before writing artifacts', () => {
   const cwd = tempDir();
   const config = createRun(cwd);
@@ -343,6 +371,28 @@ test('motion-scout records required discovery inspections even when a source has
   expect(coverage).not.toContain('| unknown-motion-clue | desktop | yes |');
 });
 
+test('motion-scout probe fails closed when an engine map source field is absent', () => {
+  const result = runProbeWithMap({
+    cssHovers: [],
+    hoverCandidates: [],
+    splitReveals: [],
+    scrollTriggers: [],
+  });
+
+  expect(result.sourceInspections).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: 'css-transition-hover',
+      status: 'complete',
+      candidates: 0,
+    }),
+    expect.objectContaining({
+      source: 'css-keyframes-loop',
+      status: 'missing',
+      candidates: 0,
+    }),
+  ]));
+});
+
 test('motion-scout records source-level inspection failures while preserving sibling evidence', () => {
   const cwd = tempDir();
   const config = prepareStaticMapRun(cwd);
@@ -351,6 +401,7 @@ test('motion-scout records source-level inspection failures while preserving sib
       ? Object.assign({}, row, {
         status: 'missing',
         completed: false,
+        evidence: '',
         reason: 'ScrollTrigger registry inspection threw: registry unavailable',
       })
       : row

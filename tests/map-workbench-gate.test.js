@@ -36,47 +36,54 @@ function tempDir() {
   return dir;
 }
 
-function createRun(cwd) {
-  return initRun({
+function createRun(cwd, options = {}) {
+  return initRun(Object.assign({
     url: 'https://example.com/source',
     runDir: path.join(cwd, 'run'),
-  }, { cwd, now: new Date('2026-06-17T12:00:00.000Z') });
+  }, options), { cwd, now: new Date('2026-06-17T12:00:00.000Z') });
 }
 
-function pageModel() {
+function pageModel(options = {}) {
+  const viewports = Array.isArray(options.viewports) && options.viewports.length
+    ? options.viewports
+    : [{ id: 'desktop', width: 1280, height: 800 }];
+  const dimensions = {};
+  const regionViewports = {};
+  for (const viewport of viewports) {
+    const width = viewport.width || 1280;
+    const height = viewport.id === 'mobile' ? 520 : 620;
+    dimensions[viewport.id] = { scrollWidth: width, scrollHeight: 1200 };
+    regionViewports[viewport.id] = {
+      presence: 'present',
+      rect: { x: 0, y: 0, width, height },
+      stacking: { zIndex: 'auto' },
+      scrollY: 0,
+      placeholder: { width, height },
+      crop: {
+        path: `02-static-map/crops/${viewport.id}/region-hero.png`,
+        width,
+        height,
+        bytes: 68,
+        selector: 'main > section.hero',
+        method: 'fixture',
+      },
+    };
+  }
   return {
     schemaVersion: 1,
     source: { url: 'https://example.com/source' },
-    viewports: [{ id: 'desktop', width: 1280, height: 800 }],
+    viewports,
     pages: {
       home: {
         path: '/',
-        dimensions: {
-          desktop: { scrollWidth: 1280, scrollHeight: 1200 },
-        },
+        dimensions,
         regions: [{
           id: 'region-hero',
           name: 'Hero',
           kind: 'hero',
           parentId: null,
           order: 0,
-          viewports: {
-            desktop: {
-              presence: 'present',
-              rect: { x: 0, y: 0, width: 1280, height: 620 },
-              stacking: { zIndex: 'auto' },
-              scrollY: 0,
-              placeholder: { width: 1280, height: 620 },
-              crop: {
-                path: '02-static-map/crops/desktop/region-hero.png',
-                width: 1280,
-                height: 620,
-                bytes: 68,
-                selector: 'main > section.hero',
-                method: 'fixture',
-              },
-            },
-          },
+          viewports: regionViewports,
           static: {
             colors: [],
             typography: [],
@@ -140,8 +147,8 @@ function completeMotionInspections(viewportId = 'desktop') {
 }
 
 function prepareGateRun(cwd, options = {}) {
-  const config = createRun(cwd);
-  writeJson(path.join(config.runDir, 'page-model.json'), pageModel());
+  const config = createRun(cwd, options);
+  writeJson(path.join(config.runDir, 'page-model.json'), pageModel({ viewports: config.viewports }));
 
   writeJson(path.join(reconDir(config.runDir), 'page-state.json'), {
     schemaVersion: 1,
@@ -152,7 +159,7 @@ function prepareGateRun(cwd, options = {}) {
   writeJson(path.join(staticMapDir(config.runDir), 'measurements.json'), {
     schemaVersion: 1,
     generatedAt: '2026-06-17T12:20:00.000Z',
-    viewports: [{ id: 'desktop', regionIds: ['region-hero'] }],
+    viewports: config.viewports.map(viewport => ({ id: viewport.id, regionIds: ['region-hero'] })),
   });
   const staticAssertionRows = options.staticAssertions || [{
     id: 'static-map-region-hero-desktop-crop',
@@ -204,6 +211,8 @@ function prepareGateRun(cwd, options = {}) {
       candidates: [],
       discovery: {
         sources: {},
+        requiredSources: REQUIRED_MOTION_DISCOVERY_SOURCES.slice(),
+        inspections: completeMotionInspections('desktop'),
         motionFidelity: { status: 'not-measured', reason: 'fixture' },
       },
     });
@@ -397,6 +406,59 @@ test('yoinkit map-gate --approve blocks Report snapshots without input hashes', 
   ]));
 });
 
+test('yoinkit map-gate --approve blocks Report snapshots missing a required input hash', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const snapshotFile = path.join(mapReportDir(config.runDir), 'report-snapshot.json');
+  const snapshot = readJson(snapshotFile);
+  delete snapshot.inputHashes['03-motion-scout/coverage.md'];
+  writeJson(snapshotFile, snapshot);
+  writeText(path.join(motionScoutDir(config.runDir), 'coverage.md'), '# changed after snapshot\n');
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('03-motion-scout/coverage.md');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.freshnessSummary).toMatchObject({
+    missingInputs: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '03-motion-scout/coverage.md',
+      source: 'report-freshness',
+      status: 'missing',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks Report snapshot input hashes that escape the run directory', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const outsideFile = path.join(cwd, 'outside.txt');
+  fs.writeFileSync(outsideFile, 'outside the run\n');
+  const snapshotFile = path.join(mapReportDir(config.runDir), 'report-snapshot.json');
+  const snapshot = readJson(snapshotFile);
+  snapshot.inputHashes['../outside.txt'] = sha256File(outsideFile);
+  writeJson(snapshotFile, snapshot);
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('../outside.txt');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.freshnessSummary).toMatchObject({
+    unexpectedInputs: 1,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '../outside.txt',
+      source: 'report-freshness',
+      status: 'invalid',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks incomplete required coverage rows', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
@@ -405,12 +467,6 @@ test('yoinkit map-gate --approve blocks incomplete required coverage rows', () =
       required: true,
       status: 'missing',
       reason: 'crop evidence is absent',
-    }],
-    motionCoverage: [{
-      area: 'css transitions',
-      required: true,
-      status: 'incomplete',
-      reason: 'CSS transition scan did not finish',
     }],
   });
 
@@ -421,18 +477,13 @@ test('yoinkit map-gate --approve blocks incomplete required coverage rows', () =
   const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
   expect(gate.coverageSummary).toMatchObject({
     staticMap: { incompleteRequired: 1 },
-    motionScout: { incompleteRequired: 1 },
+    motionScout: { incompleteRequired: 0 },
   });
   expect(gate.blockers).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: 'region-hero crop',
       source: 'static-map-coverage',
       status: 'missing',
-    }),
-    expect.objectContaining({
-      id: 'css transitions',
-      source: 'motion-scout-coverage',
-      status: 'incomplete',
     }),
   ]));
 });
@@ -446,12 +497,6 @@ test('yoinkit map-gate --approve does not accept markdown-approved required cove
       status: 'approved',
       reason: 'markdown approval is not canonical',
     }],
-    motionCoverage: [{
-      area: 'css transitions',
-      required: true,
-      status: 'exception',
-      reason: 'markdown exception is not canonical',
-    }],
   });
 
   const result = runGate(cwd, [config.runDir, '--approve']);
@@ -460,11 +505,10 @@ test('yoinkit map-gate --approve does not accept markdown-approved required cove
   const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
   expect(gate.coverageSummary).toMatchObject({
     staticMap: { incompleteRequired: 1 },
-    motionScout: { incompleteRequired: 1 },
+    motionScout: { incompleteRequired: 0 },
   });
   expect(gate.blockers).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'region-hero crop', status: 'approved' }),
-    expect.objectContaining({ id: 'css transitions', status: 'exception' }),
   ]));
 });
 
@@ -714,6 +758,110 @@ test('yoinkit map-gate --approve blocks a missing structured Motion Scout discov
   ]));
 });
 
+test('yoinkit map-gate --approve blocks under-declared Motion Scout discovery sources', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const candidatesFile = path.join(motionScoutDir(config.runDir), 'motion-candidates.json');
+  const candidates = readJson(candidatesFile);
+  candidates.discovery.requiredSources = candidates.discovery.requiredSources
+    .filter(source => source !== 'scroll-trigger-registry');
+  candidates.discovery.inspections = candidates.discovery.inspections
+    .filter(row => !(row.source === 'scroll-trigger-registry' && row.viewportId === 'desktop'));
+  writeJson(candidatesFile, candidates);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:11:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('scroll-trigger-registry:desktop');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'scroll-trigger-registry:desktop',
+      source: 'motion-scout-discovery',
+      status: 'missing',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks a missing Motion Scout discovery matrix', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const candidatesFile = path.join(motionScoutDir(config.runDir), 'motion-candidates.json');
+  const candidates = readJson(candidatesFile);
+  delete candidates.discovery.inspections;
+  writeJson(candidatesFile, candidates);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:12:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: { incompleteRequired: REQUIRED_MOTION_DISCOVERY_SOURCES.length },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'css-transition-hover:desktop',
+      source: 'motion-scout-discovery',
+      status: 'missing',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve requires Motion Scout discovery inspections for each viewport', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    viewports: ['desktop=1280x800', 'mobile=390x844'],
+    motionScoutMeasurement: {
+      sourceInspections: completeMotionInspections('desktop'),
+    },
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('css-transition-hover:mobile');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: { incompleteRequired: REQUIRED_MOTION_DISCOVERY_SOURCES.length },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'css-transition-hover:mobile',
+      source: 'motion-scout-discovery',
+      status: 'missing',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks when no viewport can be resolved for discovery coverage', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const configFile = path.join(config.runDir, '00-config.json');
+  const modelFile = path.join(config.runDir, 'page-model.json');
+  const runConfig = readJson(configFile);
+  const model = readJson(modelFile);
+  runConfig.viewports = [];
+  model.viewports = [];
+  writeJson(configFile, runConfig);
+  writeJson(modelFile, model);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:13:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('motion-scout-discovery:viewports');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'motion-scout-discovery:viewports',
+      source: 'motion-scout-discovery',
+      status: 'missing',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks unknowns without reasons', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
@@ -850,6 +998,41 @@ test('yoinkit map-gate --approve-exception rejects an unknown Region scope', () 
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
 
+test('yoinkit map-gate --approve-exception rejects cross-stage exception id collisions', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.exceptions.push({
+    id: 'exception-hero-crop',
+    stage: 'capture',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Capture owns this exception id.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:14:00.000Z') });
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-crop',
+    '--reason', 'Map Gate must not take over Capture exception ids.',
+    '--scope', 'region:region-hero',
+  ]);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('already exists for stage capture');
+  expect(readJson(pageModelFile).exceptions).toEqual([
+    expect.objectContaining({
+      id: 'exception-hero-crop',
+      stage: 'capture',
+      reason: 'Capture owns this exception id.',
+    }),
+  ]);
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
 test('yoinkit map-gate --approve-exception rejects unsupported scope kinds', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
@@ -974,6 +1157,52 @@ test('yoinkit map-gate requires final approval after approving a scoped Region e
   });
   expect(gate.exceptionIds).toContain('exception-hero-crop');
   expect(gate.blockers).toEqual([]);
+});
+
+test('yoinkit map-gate --approve keeps assertion exception ids scoped to their resolved Region', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.exceptions.push({
+    id: 'exception-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Only the hero Region is waived.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+  const motionAssertionsFile = path.join(motionScoutDir(config.runDir), 'assertions.json');
+  const motionAssertions = readJson(motionAssertionsFile);
+  motionAssertions.assertions.push({
+    id: 'motion-scout-unresolved-target',
+    kind: 'discovery-coverage',
+    required: true,
+    status: 'fail',
+    evidence: ['target did not resolve to a Page model Region'],
+    failure: 'unresolved target should stay blocking',
+    exceptionId: 'exception-hero-crop',
+  });
+  writeJson(motionAssertionsFile, motionAssertions);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:15:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('motion-scout-unresolved-target');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.assertionSummary).toMatchObject({
+    failedRequired: 1,
+    exceptedRequired: 0,
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'motion-scout-unresolved-target',
+      source: 'motion-scout-assertions',
+      status: 'fail',
+    }),
+  ]));
 });
 
 test('yoinkit map-gate --approve records final approval when Report inputs are fresh and blockers are clear', () => {
