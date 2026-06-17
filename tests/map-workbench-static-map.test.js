@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
+const { pathToFileURL } = require('url');
 
 const { initRun } = require('../lib/map-workbench/init');
 const { readJson, writeJson } = require('../lib/map-workbench/artifacts');
@@ -134,6 +135,14 @@ function tinyPngBytes() {
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lTO+8QAAAABJRU5ErkJggg==',
     'base64'
   );
+}
+
+function updateConfig(runDir, mutate) {
+  const file = path.join(runDir, '00-config.json');
+  const config = readJson(file);
+  mutate(config);
+  writeJson(file, config);
+  return config;
 }
 
 test('static-map requires completed ready Recon evidence before writing Static Map artifacts', () => {
@@ -721,11 +730,259 @@ test('static-map fetches safely discoverable Region asset evidence', () => {
   });
   expect(assets[2]).toMatchObject({
     selector: 'img.analytics-pixel',
-    status: 'missing',
+    status: 'skipped',
     path: null,
-    reason: 'cross-origin asset fetch skipped',
+    reason: 'cross-origin asset fetch disabled by default',
     required: false,
     severity: 'info',
+    gateImpact: 'non-blocking',
+    recovery: {
+      flag: '--fetch-public-cross-origin-assets',
+    },
+  });
+});
+
+test('static-map skips file assets by default without reading them', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:36:30.000Z'),
+  });
+  const localAsset = path.join(cwd, 'local.png');
+  fs.writeFileSync(localAsset, tinyPngBytes());
+  let fetchCalled = false;
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              assets: [{
+                selector: 'img.local',
+                kind: 'img',
+                url: pathToFileURL(localAsset).href,
+                role: 'content',
+              }],
+            }),
+          ],
+        };
+      },
+      fetchAsset() {
+        fetchCalled = true;
+        throw new Error('file should not be read by default');
+      },
+    },
+    now: new Date('2026-06-17T13:16:30.000Z'),
+  });
+
+  expect(fetchCalled).toBe(false);
+  expect(result.regions[0].static.assets[0]).toMatchObject({
+    status: 'skipped',
+    severity: 'info',
+    gateImpact: 'non-blocking',
+    reason: 'file asset fetch disabled by default',
+    recovery: { flag: '--allow-file-assets --file-asset-root <dir>' },
+  });
+  expect(result.assertions.assertions.find(assertion => assertion.id === 'static-map-region-launch-faster-assets').status).toBe('pass');
+});
+
+test('static-map copies opted-in file assets only inside the trusted root', () => {
+  const cwd = tempDir();
+  const trustedRoot = path.join(cwd, 'trusted-assets');
+  fs.mkdirSync(trustedRoot, { recursive: true });
+  const trustedAsset = path.join(trustedRoot, 'hero.png');
+  fs.writeFileSync(trustedAsset, tinyPngBytes());
+  const config = createRun(cwd);
+  updateConfig(config.runDir, runConfig => {
+    runConfig.yoink.assets.file = { mode: 'allow', root: trustedRoot };
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:36:40.000Z'),
+  });
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              assets: [{
+                selector: 'img.local',
+                kind: 'img',
+                url: pathToFileURL(trustedAsset).href,
+                role: 'content',
+              }],
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:16:40.000Z'),
+  });
+
+  const asset = result.regions[0].static.assets[0];
+  expect(asset).toMatchObject({
+    status: 'fetched',
+    path: '02-static-map/assets/region-launch-faster/hero.png',
+    sha256: crypto.createHash('sha256').update(tinyPngBytes()).digest('hex'),
+  });
+  expect(fs.statSync(path.join(config.runDir, asset.path)).size).toBe(tinyPngBytes().length);
+});
+
+test('static-map rejects file asset symlink escapes outside the trusted root', () => {
+  const cwd = tempDir();
+  const trustedRoot = path.join(cwd, 'trusted-assets');
+  fs.mkdirSync(trustedRoot, { recursive: true });
+  const outsideAsset = path.join(cwd, 'outside.png');
+  const symlinkAsset = path.join(trustedRoot, 'escape.png');
+  fs.writeFileSync(outsideAsset, tinyPngBytes());
+  fs.symlinkSync(outsideAsset, symlinkAsset);
+  const config = createRun(cwd);
+  updateConfig(config.runDir, runConfig => {
+    runConfig.yoink.assets.file = { mode: 'allow', root: trustedRoot };
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:36:50.000Z'),
+  });
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              assets: [{
+                selector: 'img.escape',
+                kind: 'img',
+                url: pathToFileURL(symlinkAsset).href,
+                role: 'content',
+              }],
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:16:50.000Z'),
+  });
+
+  expect(result.regions[0].static.assets[0]).toMatchObject({
+    status: 'skipped',
+    reason: 'file asset resolves outside trusted root',
+    gateImpact: 'non-blocking',
+  });
+});
+
+test('static-map fetches public https cross-origin assets only after safety checks', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  updateConfig(config.runDir, runConfig => {
+    runConfig.yoink.assets.crossOrigin = { mode: 'fetch-public-https' };
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:37:10.000Z'),
+  });
+  const resolvedHosts = [];
+  const fetchedUrls = [];
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      resolveAssetHost(hostname) {
+        resolvedHosts.push(hostname);
+        return ['93.184.216.34'];
+      },
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              assets: [{
+                selector: 'img.cdn',
+                kind: 'img',
+                url: 'https://cdn.example.test/hero.png',
+                role: 'content',
+              }],
+            }),
+          ],
+        };
+      },
+      fetchAsset({ url, plan }) {
+        fetchedUrls.push({ url, plan });
+        return { bytes: tinyPngBytes(), contentType: 'image/png', finalUrl: url };
+      },
+    },
+    now: new Date('2026-06-17T13:17:10.000Z'),
+  });
+
+  expect(resolvedHosts).toEqual(['cdn.example.test']);
+  expect(fetchedUrls[0].plan).toMatchObject({
+    source: 'cross-origin',
+    validatePublicHttps: true,
+  });
+  expect(result.regions[0].static.assets[0]).toMatchObject({
+    status: 'fetched',
+    originalUrl: 'https://cdn.example.test/hero.png',
+    finalUrl: 'https://cdn.example.test/hero.png',
+  });
+});
+
+test('static-map skips private cross-origin override targets before fetching', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  updateConfig(config.runDir, runConfig => {
+    runConfig.yoink.assets.crossOrigin = { mode: 'fetch-public-https' };
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:37:20.000Z'),
+  });
+  let fetchCalled = false;
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      resolveAssetHost() {
+        return ['127.0.0.1'];
+      },
+      measure() {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Launch faster' },
+              assets: [{
+                selector: 'img.private',
+                kind: 'img',
+                url: 'https://private.example.test/hero.png',
+                role: 'content',
+              }],
+            }),
+          ],
+        };
+      },
+      fetchAsset() {
+        fetchCalled = true;
+        throw new Error('private target should not be fetched');
+      },
+    },
+    now: new Date('2026-06-17T13:17:20.000Z'),
+  });
+
+  expect(fetchCalled).toBe(false);
+  expect(result.regions[0].static.assets[0]).toMatchObject({
+    status: 'skipped',
+    reason: 'cross-origin asset host resolved to a private or reserved address',
+    gateImpact: 'non-blocking',
   });
 });
 
@@ -927,6 +1184,107 @@ test('static-map assertions and coverage include crop asset typography unknown a
   expect(coverage).toContain('| region-evidence-completeness | static-map-region-launch-faster-evidence-completeness | required | missing |');
 });
 
+test('yoinkit static-map persists asset flags and prints skipped asset summary', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({ desktop: readyReconSnapshot() }),
+    now: new Date('2026-06-17T12:38:30.000Z'),
+  });
+  const fixtureFile = path.join(cwd, 'static-map-fixture.json');
+  fs.writeFileSync(fixtureFile, `${JSON.stringify({
+    desktop: {
+      candidates: [
+        measuredCandidate({
+          selector: 'main > section.hero',
+          semantic: { tagName: 'section', heading: 'Launch faster' },
+          assets: [{
+            selector: 'img.cdn',
+            kind: 'img',
+            url: 'https://cdn.example.test/hero.png',
+            role: 'content',
+          }],
+        }),
+      ],
+    },
+  }, null, 2)}\n`);
+
+  const result = spawnSync(process.execPath, [BIN, 'static-map', config.runDir, '--strict-skipped-assets'], {
+    cwd,
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, {
+      YOINKIT_STATIC_MAP_FIXTURE: fixtureFile,
+    }),
+  });
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('Skipped assets:');
+  expect(result.stdout).toContain('1 cross-origin asset');
+  const persisted = readJson(path.join(config.runDir, '00-config.json'));
+  expect(persisted.yoink.assets.strictSkippedAssets).toBe(true);
+  const coverage = fs.readFileSync(path.join(config.runDir, '02-static-map', 'coverage.md'), 'utf8');
+  expect(coverage).toContain('## Skipped Assets');
+  expect(coverage).toContain('--fetch-public-cross-origin-assets');
+});
+
+test('static-map batches crop screenshots once per viewport when the driver supports it', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd, {
+    viewports: ['desktop=1280x800', 'mobile=390x844'],
+  });
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({
+      desktop: readyReconSnapshot(),
+      mobile: readyReconSnapshot({
+        dimensions: {
+          scrollWidth: 390,
+          scrollHeight: 1800,
+          clientWidth: 390,
+          clientHeight: 844,
+        },
+        viewport: { width: 390, height: 844, devicePixelRatio: 2 },
+      }),
+    }),
+    now: new Date('2026-06-17T12:38:40.000Z'),
+  });
+  const batchCalls = [];
+
+  const result = runStaticMap(config.runDir, {
+    driver: {
+      measure(targetUrl, viewport) {
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'section.hero',
+              selectors: ['section.hero'],
+              semantic: { tagName: 'section', heading: 'Hero' },
+              rect: { x: 0, y: 80, width: viewport.width, height: 400 },
+            }),
+            measuredCandidate({
+              selector: 'section.work',
+              selectors: ['section.work'],
+              semantic: { tagName: 'section', heading: 'Work' },
+              rect: { x: 0, y: 520, width: viewport.width, height: 400 },
+            }),
+          ],
+        };
+      },
+      captureRegionCrops({ viewport, crops }) {
+        batchCalls.push({ viewportId: viewport.id, count: crops.length });
+        crops.forEach(crop => writeTinyPng(crop.outputFile));
+        return crops.map(crop => ({ width: crop.region.viewports[viewport.id].rect.width, height: crop.region.viewports[viewport.id].rect.height }));
+      },
+    },
+    now: new Date('2026-06-17T13:18:40.000Z'),
+  });
+
+  expect(batchCalls).toEqual([
+    { viewportId: 'desktop', count: 2 },
+    { viewportId: 'mobile', count: 2 },
+  ]);
+  expect(result.regions.every(region => region.viewports.desktop.crop.path && region.viewports.mobile.crop.path)).toBe(true);
+});
+
 const browserTest = commandExists('agent-browser') ? test : test.skip;
 
 browserTest('static-map browser fixture writes a non-empty Region crop', async () => {
@@ -966,6 +1324,7 @@ browserTest('static-map browser fixture writes a non-empty Region crop', async (
     expect(firstCrop.path).toMatch(/^02-static-map\/crops\/desktop\/.+\.png$/);
     expect(fs.statSync(path.join(config.runDir, firstCrop.path)).size).toBeGreaterThan(0);
     expect(result.regions.some(region => region.static.typography.length > 0)).toBe(true);
+    expect(result.regions.some(region => region.static.assets.some(asset => asset.kind === 'background-image'))).toBe(true);
   } finally {
     const env = Object.assign({}, process.env, { AGENT_BROWSER_SESSION: session });
     spawnSync(path.join(__dirname, '..', 'bin', 'capture-browser'), ['close'], { env });

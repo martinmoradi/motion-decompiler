@@ -54,6 +54,44 @@ test('parseInitArgs accepts only the v0 init shorthand', () => {
   expect(() => parseInitArgs(['https://example.com/', '--runs-dir', 'runs'])).toThrow(/Unknown init option: --runs-dir/);
 });
 
+test('asset policy defaults to safe skips and explicit overrides persist in config', () => {
+  const cwd = tempDir();
+  const defaults = resolveRunConfig({
+    url: 'https://example.com/',
+  }, { cwd, now: new Date('2026-06-17T12:00:00.000Z') });
+
+  expect(defaults.yoink.assets).toEqual({
+    file: { mode: 'skip', root: null },
+    crossOrigin: { mode: 'skip' },
+    strictSkippedAssets: false,
+    maxBytes: 10_000_000,
+  });
+
+  const root = path.join(cwd, 'trusted-assets');
+  const override = resolveRunConfig({
+    url: 'https://example.com/',
+    allowFileAssets: true,
+    fileAssetRoot: root,
+    fetchPublicCrossOriginAssets: true,
+    strictSkippedAssets: true,
+  }, { cwd, now: new Date('2026-06-17T12:00:00.000Z') });
+
+  expect(override.yoink.assets).toEqual({
+    file: { mode: 'allow', root },
+    crossOrigin: { mode: 'fetch-public-https' },
+    strictSkippedAssets: true,
+    maxBytes: 10_000_000,
+  });
+  expect(() => resolveRunConfig({
+    url: 'https://example.com/',
+    allowFileAssets: true,
+  }, { cwd })).toThrow(/--allow-file-assets requires --file-asset-root/);
+  expect(() => resolveRunConfig({
+    url: 'https://example.com/',
+    fileAssetRoot: root,
+  }, { cwd })).toThrow(/--file-asset-root requires --allow-file-assets/);
+});
+
 test('viewport shorthand resolves default, named, unnamed, and duplicate ids', () => {
   expect(resolveViewports([])).toEqual([
     { id: 'desktop', width: 1280, height: 800 },
