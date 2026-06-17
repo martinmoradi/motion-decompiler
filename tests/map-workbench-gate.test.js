@@ -18,6 +18,7 @@ const {
   writeText,
 } = require('../lib/map-workbench/artifacts');
 const { runMapReport } = require('../lib/map-workbench/map-report');
+const { runMotionScout } = require('../lib/map-workbench/motion-scout');
 
 const BIN = path.join(__dirname, '..', 'bin', 'yoinkit');
 const CLI_TIMEOUT_MS = 10000;
@@ -116,6 +117,27 @@ function assertions(rows) {
   };
 }
 
+const REQUIRED_MOTION_DISCOVERY_SOURCES = [
+  'css-transition-hover',
+  'hover-affordance',
+  'css-keyframes',
+  'css-keyframes-loop',
+  'split-reveal-dom',
+  'scroll-trigger-registry',
+  'sticky-pinned-clue',
+  'click-affordance',
+  'cursor-affordance',
+];
+
+function completeMotionInspections(viewportId = 'desktop') {
+  return REQUIRED_MOTION_DISCOVERY_SOURCES.map(source => ({
+    source,
+    viewportId,
+    status: 'complete',
+    evidence: `${source} inspected`,
+  }));
+}
+
 function prepareGateRun(cwd, options = {}) {
   const config = createRun(cwd);
   writeJson(path.join(config.runDir, 'page-model.json'), pageModel());
@@ -145,28 +167,39 @@ function prepareGateRun(cwd, options = {}) {
     status: 'complete',
   }]));
 
-  writeJson(path.join(motionScoutDir(config.runDir), 'motion-candidates.json'), {
-    schemaVersion: 1,
-    generatedAt: '2026-06-17T12:25:00.000Z',
-    candidates: [],
-    discovery: {
-      sources: {},
-      motionFidelity: { status: 'not-measured', reason: 'fixture' },
-    },
-  });
-  writeJson(path.join(motionScoutDir(config.runDir), 'assertions.json'), assertions(options.motionAssertions || [{
-    id: 'motion-scout-region-attachment',
-    kind: 'region-attachment',
-    required: true,
-    status: 'pass',
-    evidence: ['all candidates attached or explained'],
-    failure: null,
-  }]));
-  writeText(path.join(motionScoutDir(config.runDir), 'coverage.md'), coverageMarkdown('Motion Scout Coverage', options.motionCoverage || [{
-    area: 'css transitions',
-    required: true,
-    status: 'complete',
-  }]));
+  if (options.motionScoutMeasurement) {
+    runMotionScout(config.runDir, {
+      driver: {
+        measure() {
+          return JSON.parse(JSON.stringify(options.motionScoutMeasurement));
+        },
+      },
+      now: new Date('2026-06-17T12:25:00.000Z'),
+    });
+  } else {
+    writeJson(path.join(motionScoutDir(config.runDir), 'motion-candidates.json'), {
+      schemaVersion: 1,
+      generatedAt: '2026-06-17T12:25:00.000Z',
+      candidates: [],
+      discovery: {
+        sources: {},
+        motionFidelity: { status: 'not-measured', reason: 'fixture' },
+      },
+    });
+    writeJson(path.join(motionScoutDir(config.runDir), 'assertions.json'), assertions(options.motionAssertions || [{
+      id: 'motion-scout-region-attachment',
+      kind: 'region-attachment',
+      required: true,
+      status: 'pass',
+      evidence: ['all candidates attached or explained'],
+      failure: null,
+    }]));
+    writeText(path.join(motionScoutDir(config.runDir), 'coverage.md'), coverageMarkdown('Motion Scout Coverage', options.motionCoverage || [{
+      area: 'css transitions',
+      required: true,
+      status: 'complete',
+    }]));
+  }
 
   runMapReport(config.runDir, { now: new Date('2026-06-17T12:45:00.000Z') });
   return config;
@@ -317,6 +350,41 @@ test('yoinkit map-gate --approve blocks incomplete required coverage rows', () =
       id: 'css transitions',
       source: 'motion-scout-coverage',
       status: 'incomplete',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks uninspected required Motion Scout discovery sources', () => {
+  const cwd = tempDir();
+  const inspections = completeMotionInspections('desktop').map(row => (
+    row.source === 'scroll-trigger-registry'
+      ? Object.assign({}, row, {
+        status: 'missing',
+        completed: false,
+        reason: 'ScrollTrigger registry inspection threw: registry unavailable',
+      })
+      : row
+  ));
+  const config = prepareGateRun(cwd, {
+    motionScoutMeasurement: {
+      sourceInspections: inspections,
+    },
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('scroll-trigger-registry');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'scroll-trigger-registry',
+      source: 'motion-scout-coverage',
+      status: 'missing',
+      message: 'ScrollTrigger registry inspection threw: registry unavailable',
     }),
   ]));
 });

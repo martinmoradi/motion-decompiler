@@ -162,6 +162,27 @@ function hasForbiddenKey(value, keys) {
   return Object.entries(value).some(([key, child]) => keys.includes(key) || hasForbiddenKey(child, keys));
 }
 
+const REQUIRED_MOTION_DISCOVERY_SOURCES = [
+  'css-transition-hover',
+  'hover-affordance',
+  'css-keyframes',
+  'css-keyframes-loop',
+  'split-reveal-dom',
+  'scroll-trigger-registry',
+  'sticky-pinned-clue',
+  'click-affordance',
+  'cursor-affordance',
+];
+
+function completeMotionInspections(viewportId = 'desktop') {
+  return REQUIRED_MOTION_DISCOVERY_SOURCES.map(source => ({
+    source,
+    viewportId,
+    status: 'complete',
+    evidence: `${source} inspected`,
+  }));
+}
+
 test('motion-scout requires a completed Static Map Region scaffold before writing artifacts', () => {
   const cwd = tempDir();
   const config = createRun(cwd);
@@ -288,6 +309,84 @@ test('motion-scout writes deduplicated candidate records and Region-local refere
   expect(coverage).toContain('| css-transition-hover | 1 | complete |');
   expect(coverage).toContain('CSS hover transition clue on transform, opacity');
   expect(coverage).toContain('| region-launch-faster |');
+});
+
+test('motion-scout records required discovery inspections even when a source has zero candidates', () => {
+  const cwd = tempDir();
+  const config = prepareStaticMapRun(cwd);
+
+  runMotionScout(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          sourceInspections: completeMotionInspections('desktop'),
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:05:00.000Z'),
+  });
+
+  const artifact = readJson(path.join(config.runDir, '03-motion-scout', 'motion-candidates.json'));
+  expect(artifact.discovery.requiredSources).toEqual(REQUIRED_MOTION_DISCOVERY_SOURCES);
+  expect(artifact.discovery.inspections).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: 'scroll-trigger-registry',
+      viewportId: 'desktop',
+      required: true,
+      status: 'complete',
+      candidates: 0,
+    }),
+  ]));
+
+  const coverage = fs.readFileSync(path.join(config.runDir, '03-motion-scout', 'coverage.md'), 'utf8');
+  expect(coverage).toContain('| scroll-trigger-registry | desktop | yes | 0 | complete |');
+  expect(coverage).not.toContain('| unknown-motion-clue | desktop | yes |');
+});
+
+test('motion-scout records source-level inspection failures while preserving sibling evidence', () => {
+  const cwd = tempDir();
+  const config = prepareStaticMapRun(cwd);
+  const inspections = completeMotionInspections('desktop').map(row => (
+    row.source === 'scroll-trigger-registry'
+      ? Object.assign({}, row, {
+        status: 'missing',
+        completed: false,
+        reason: 'ScrollTrigger registry inspection threw: registry unavailable',
+      })
+      : row
+  ));
+
+  const result = runMotionScout(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          sourceInspections: inspections,
+          cssHovers: [{ sel: 'main > section.hero a.cta', prop: 'transform' }],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:07:00.000Z'),
+  });
+
+  expect(result.candidates.map(candidate => candidate.trigger)).toEqual(['hover']);
+  const artifact = readJson(path.join(config.runDir, '03-motion-scout', 'motion-candidates.json'));
+  expect(artifact.discovery.inspections).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: 'css-transition-hover',
+      status: 'complete',
+      candidates: 1,
+    }),
+    expect.objectContaining({
+      source: 'scroll-trigger-registry',
+      status: 'missing',
+      candidates: 0,
+      reason: 'ScrollTrigger registry inspection threw: registry unavailable',
+    }),
+  ]));
+
+  const coverage = fs.readFileSync(path.join(config.runDir, '03-motion-scout', 'coverage.md'), 'utf8');
+  expect(coverage).toContain('| css-transition-hover | desktop | yes | 1 | complete |');
+  expect(coverage).toContain('| scroll-trigger-registry | desktop | yes | 0 | missing |');
 });
 
 test('motion-scout preserves occurrences, viewport applicability, and null reasons for uncertain placement', () => {
