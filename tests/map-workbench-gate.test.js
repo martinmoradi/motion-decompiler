@@ -154,18 +154,27 @@ function prepareGateRun(cwd, options = {}) {
     generatedAt: '2026-06-17T12:20:00.000Z',
     viewports: [{ id: 'desktop', regionIds: ['region-hero'] }],
   });
-  writeJson(path.join(staticMapDir(config.runDir), 'assertions.json'), assertions(options.staticAssertions || [{
-    id: 'static-map-region-hero-crop',
+  const staticAssertionRows = options.staticAssertions || [{
+    id: 'static-map-region-hero-desktop-crop',
     kind: 'region-crop',
     required: true,
     status: 'pass',
     evidence: ['crop exists'],
     failure: null,
-  }]));
+  }];
+  writeJson(path.join(staticMapDir(config.runDir), 'assertions.json'), assertions(staticAssertionRows));
   writeText(path.join(staticMapDir(config.runDir), 'coverage.md'), coverageMarkdown('Static Map Coverage', options.staticCoverage || [{
-    area: 'region-hero crop',
+    area: 'region-hero',
+    name: 'Hero',
     required: true,
     status: 'complete',
+    evidence: 'desktop',
+  }, {
+    area: 'region-crop',
+    name: 'static-map-region-hero-desktop-crop',
+    required: true,
+    status: 'complete',
+    evidence: 'crop exists',
   }]));
 
   if (options.motionScoutMeasurement) {
@@ -173,6 +182,17 @@ function prepareGateRun(cwd, options = {}) {
       driver: {
         measure() {
           return JSON.parse(JSON.stringify(options.motionScoutMeasurement));
+        },
+      },
+      now: new Date('2026-06-17T12:25:00.000Z'),
+    });
+  } else if (!options.motionAssertions && !options.motionCoverage && !options.staticAssertions && !options.staticCoverage) {
+    runMotionScout(config.runDir, {
+      driver: {
+        measure() {
+          return {
+            sourceInspections: completeMotionInspections('desktop'),
+          };
         },
       },
       now: new Date('2026-06-17T12:25:00.000Z'),
@@ -831,6 +851,11 @@ test('yoinkit map-gate --approve records final approval when Report inputs are f
   const gateFile = path.join(mapReportDir(config.runDir), 'gate.json');
   expect(result.status).toBe(0);
   expect(result.stdout.trim()).toBe(gateFile);
+  const staticCoverage = fs.readFileSync(path.join(staticMapDir(config.runDir), 'coverage.md'), 'utf8');
+  expect(staticCoverage).toContain('| region-crop | static-map-region-hero-desktop-crop | required | complete |');
+  const motionCandidates = readJson(path.join(motionScoutDir(config.runDir), 'motion-candidates.json'));
+  expect(motionCandidates.discovery.inspections).toHaveLength(REQUIRED_MOTION_DISCOVERY_SOURCES.length);
+  expect(motionCandidates.discovery.inspections.every(row => row.status === 'complete')).toBe(true);
   const gate = readJson(gateFile);
   expect(gate).toMatchObject({
     schemaVersion: 1,
