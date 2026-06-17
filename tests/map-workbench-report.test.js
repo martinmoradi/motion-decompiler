@@ -329,6 +329,13 @@ test('Gate mode surfaces failed, incomplete, unknown, exception, stale, and cand
 
   const snapshot = extractSnapshot(html);
   expect(snapshot.gateFindings.map(finding => finding.message)).not.toContain('approved hero asset exception should stay hidden');
+  expect(snapshot.gateFindings).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: 'motion-scout',
+      id: '03-motion-scout/assertions.json',
+      status: 'stale',
+    }),
+  ]));
   expect(snapshot.gateFindings.map(finding => finding.status)).toEqual(expect.arrayContaining([
     'fail',
     'unknown',
