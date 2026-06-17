@@ -674,7 +674,7 @@ test('yoinkit map-gate requires final approval after approving a scoped Region e
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
     staticAssertions: [{
-      id: 'static-map-region-hero-crop',
+      id: 'static-map-region-hero-desktop-crop',
       kind: 'region-crop',
       required: true,
       status: 'fail',
@@ -686,8 +686,34 @@ test('yoinkit map-gate requires final approval after approving a scoped Region e
       required: true,
       status: 'missing',
       reason: 'region-level crop coverage is blocked by the same source cookie banner',
+    }, {
+      area: 'region-crop',
+      name: 'static-map-region-hero-desktop-crop',
+      required: true,
+      status: 'missing',
+      reason: 'crop assertion coverage is blocked by the same source cookie banner',
     }],
   });
+
+  const blockedResult = runGate(cwd, [config.runDir, '--approve', '--note', 'Report v0 reviewed before exception']);
+
+  expect(blockedResult.status).toBe(1);
+  expect(blockedResult.stderr).toContain('static-map-region-hero-desktop-crop');
+  const blockedGate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(blockedGate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'static-map-region-hero-desktop-crop',
+      source: 'static-map-assertions',
+    }),
+    expect.objectContaining({
+      id: 'region-hero',
+      source: 'static-map-coverage',
+    }),
+    expect.objectContaining({
+      id: 'static-map-region-hero-desktop-crop',
+      source: 'static-map-coverage',
+    }),
+  ]));
 
   const exceptionResult = runGate(cwd, [
     config.runDir,
