@@ -10,7 +10,10 @@ const { initRun } = require('../lib/map-workbench/init');
 const { readJson, writeJson } = require('../lib/map-workbench/artifacts');
 const { runRecon } = require('../lib/map-workbench/recon');
 const { runStaticMap } = require('../lib/map-workbench/static-map');
-const { runMotionScout } = require('../lib/map-workbench/motion-scout');
+const {
+  createFixtureMotionScoutDriver,
+  runMotionScout,
+} = require('../lib/map-workbench/motion-scout');
 
 const BIN = path.join(__dirname, '..', 'bin', 'yoinkit');
 const tempDirs = new Set();
@@ -225,7 +228,7 @@ test('motion-scout writes deduplicated candidate records and Region-local refere
               props: { y: 80 },
             }],
           }],
-          clickCandidates: ['section.logo-strip button.filter'],
+          clickCandidates: ['main > section.hero a.cta'],
           cursorCandidates: ['main > section.hero .cursor-zone'],
           stickyCandidates: ['header.site-header'],
         };
@@ -235,6 +238,7 @@ test('motion-scout writes deduplicated candidate records and Region-local refere
   });
 
   expect(result.status).toBe('ready');
+  expect(result.candidates.every(candidate => candidate.recipe.confidence === 'candidate')).toBe(true);
   expect(result.candidates.map(candidate => candidate.trigger).sort()).toEqual([
     'click',
     'cursor',
@@ -260,6 +264,8 @@ test('motion-scout writes deduplicated candidate records and Region-local refere
     'css-transition-hover',
     'hover-affordance',
   ]);
+  const sameTargetCandidates = result.candidates.filter(candidate => candidate.targetSelector === 'main > section.hero a.cta');
+  expect(sameTargetCandidates.map(candidate => candidate.trigger).sort()).toEqual(['click', 'hover']);
 
   const pageModel = readJson(path.join(config.runDir, 'page-model.json'));
   expect(pageModel.motionCandidates).toBeUndefined();
@@ -279,6 +285,7 @@ test('motion-scout writes deduplicated candidate records and Region-local refere
   expect(coverage).toContain('# Motion Scout Coverage');
   expect(coverage).toContain('| css-keyframes | 1 | complete |');
   expect(coverage).toContain('| css-transition-hover | 1 | complete |');
+  expect(coverage).toContain('CSS hover transition clue on transform, opacity');
   expect(coverage).toContain('| region-launch-faster |');
 });
 
@@ -334,6 +341,33 @@ test('motion-scout preserves occurrences, viewport applicability, and null reaso
   expect(regionRefs).not.toContain(unknown.id);
 });
 
+test('motion-scout mints candidate ids from the resolved Region across merged observations', () => {
+  const cwd = tempDir();
+  const config = prepareStaticMapRun(cwd);
+
+  const result = runMotionScout(config.runDir, {
+    driver: {
+      measure() {
+        return {
+          cssKeyframes: [{ sel: '.hero-title' }],
+          splitReveals: [{
+            host: '.hero-title',
+            section: 'main > section.hero',
+            count: 2,
+            kinds: ['line-mask'],
+          }],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:12:00.000Z'),
+  });
+
+  const candidate = result.candidates.find(item => item.trigger === 'load' && item.targetSelector === '.hero-title');
+  expect(candidate.regionId).toBe('region-launch-faster');
+  expect(candidate.id).toContain('region-launch-faster');
+  expect(candidate.id).not.toContain('out-of-region');
+});
+
 test('yoinkit motion-scout runs the Motion Scout stage from completed Static Map inputs', () => {
   const cwd = tempDir();
   const config = prepareStaticMapRun(cwd);
@@ -376,6 +410,24 @@ test('yoinkit motion-scout exits clearly before Static Map has produced Regions'
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('requires completed Static Map');
   expect(fs.existsSync(path.join(config.runDir, '03-motion-scout'))).toBe(false);
+});
+
+test('motion-scout fixture driver requires per-viewport or default fixture measurements', () => {
+  const cwd = tempDir();
+  const config = prepareStaticMapRun(cwd, {
+    viewports: ['desktop=1280x800', 'mobile=390x844'],
+  });
+  const fixtureFile = path.join(cwd, 'motion-scout-fixture.json');
+  fs.writeFileSync(fixtureFile, `${JSON.stringify({
+    desktop: {
+      cssHovers: [{ sel: 'main > section.hero a.cta', prop: 'opacity' }],
+    },
+  }, null, 2)}\n`);
+
+  expect(() => runMotionScout(config.runDir, {
+    driver: createFixtureMotionScoutDriver(fixtureFile),
+    now: new Date('2026-06-17T13:18:00.000Z'),
+  })).toThrow(/No Motion Scout fixture measurement for viewport "mobile"/);
 });
 
 test('motion-scout updates only Motion Scout-owned Page model references', () => {
