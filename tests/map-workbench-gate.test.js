@@ -379,6 +379,42 @@ test('yoinkit map-gate --approve records a blocked decision when a Report input 
   ]));
 });
 
+test('yoinkit map-gate --approve records a blocked decision when all Report inputs are missing', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  fs.rmSync(reconDir(config.runDir), { recursive: true, force: true });
+  fs.rmSync(staticMapDir(config.runDir), { recursive: true, force: true });
+  fs.rmSync(motionScoutDir(config.runDir), { recursive: true, force: true });
+  fs.rmSync(path.join(config.runDir, 'page-model.json'), { force: true });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Report v0 inputs are missing; rerun map-report');
+  expect(result.stderr).not.toContain('ENOENT');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate).toMatchObject({
+    decision: 'blocked',
+    freshnessSummary: {
+      staleInputs: 0,
+      missingInputs: 8,
+    },
+    inputHashes: {},
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '01-recon/page-state.json',
+      source: 'report-freshness',
+      status: 'missing',
+    }),
+    expect.objectContaining({
+      id: 'page-model.json',
+      source: 'report-freshness',
+      status: 'missing',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks Report snapshots without input hashes', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
