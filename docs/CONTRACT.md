@@ -887,14 +887,14 @@ Map Gate exceptions use `stage: "map-gate"`. V0 does not invent identity or auth
 the important fact is that the exception was not agent-silenced.
 
 `map-gate` must fail an approval when required assertions fail or coverage rows
-are incomplete unless each blocking item has already been marked out of scope by
-the producer or waived by a canonical human-approved exception in
-`page-model.json`. Coverage statuses such as `approved` and `exception` are not
-canonical waivers and must not pass the gate. A Region-scoped Map Gate exception
-uses `scope: { "kind": "region", "id": "<region-id>" }`; the id must resolve to
-a real Page model Region, and the approved exception waives required blockers
-whose target resolves to that Region. The command records explicit approval or
-rejection; it does not infer either from the Report.
+are incomplete unless each blocking item is waived by a canonical
+human-approved exception in `page-model.json`. Producer statuses such as
+`out_of_scope`, `approved`, and `exception` are not canonical waivers for
+required rows and must not pass the gate by themselves. A Region-scoped Map Gate
+exception uses `scope: { "kind": "region", "id": "<region-id>" }`; the id must
+resolve to a real Page model Region, and the approved exception waives required
+blockers whose target resolves to that Region. The command records explicit
+approval or rejection; it does not infer either from the Report.
 
 Because the human approves the Report, `map-gate --approve` must fail when
 `04-map-report/index.html` is missing or stale relative to `page-model.json` and
@@ -942,12 +942,12 @@ when the human or agent deliberately excludes something before the gate. Use
 `info` for non-blocking observations.
 
 The agent may propose `out_of_scope` with a reason. Required out-of-scope
-exclusions need human approval in the Map Gate decision, so they do not become a
-quieter form of exception.
+exclusions still surface as Map Gate blockers until a canonical human-approved
+exception waives them, so they do not become a quieter form of exception.
 Map workbench v0 does not need a separate CLI command for marking out-of-scope
-items. Use `out_of_scope` as an assertion or coverage status when produced by a
-stage, and use exceptions when a required item needs explicit human approval to
-proceed.
+items. Use `out_of_scope` as a non-required assertion or coverage status when
+produced by a stage, and use exceptions when a required item needs explicit
+human approval to proceed.
 
 `map-gate` is done when tests prove it evaluates required Static Map and Motion
 Scout assertions and coverage; checks Report freshness; fails approval on

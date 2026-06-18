@@ -677,7 +677,7 @@ test('yoinkit map-gate --approve blocks reasonless out-of-scope required coverag
   ]));
 });
 
-test('yoinkit map-gate --approve accepts out-of-scope required coverage rows with reasons', () => {
+test('yoinkit map-gate --approve blocks reasoned out-of-scope required coverage rows', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
     staticCoverage: [{
@@ -685,6 +685,33 @@ test('yoinkit map-gate --approve accepts out-of-scope required coverage rows wit
       required: true,
       status: 'out_of_scope',
       reason: 'Region is hidden behind a source-owned cookie banner for this run',
+    }],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    staticMap: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'region-hero crop',
+      source: 'static-map-coverage',
+      status: 'out_of_scope',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve ignores non-required out-of-scope coverage rows', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticCoverage: [{
+      area: 'region-hero note',
+      required: false,
+      status: 'out_of_scope',
+      reason: 'Informational note is out of scope for this run',
     }],
   });
 
@@ -868,6 +895,38 @@ test('yoinkit map-gate --approve treats unrecognized Motion Scout inspection sta
     }),
   ]));
 });
+
+for (const status of ['pass', 'passed']) {
+  test(`yoinkit map-gate --approve rejects non-contract Motion Scout discovery status "${status}"`, () => {
+    const cwd = tempDir();
+    const config = prepareGateRun(cwd);
+    const candidatesFile = path.join(motionScoutDir(config.runDir), 'motion-candidates.json');
+    const candidates = readJson(candidatesFile);
+    candidates.discovery.inspections = candidates.discovery.inspections.map(row => (
+      row.source === 'css-keyframes' && row.viewportId === 'desktop'
+        ? Object.assign({}, row, { status })
+        : row
+    ));
+    writeJson(candidatesFile, candidates);
+    runMapReport(config.runDir, { now: new Date('2026-06-17T13:16:00.000Z') });
+
+    const result = runGate(cwd, [config.runDir, '--approve']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('css-keyframes');
+    const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+    expect(gate.coverageSummary).toMatchObject({
+      motionScout: { incompleteRequired: 1 },
+    });
+    expect(gate.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'css-keyframes:desktop',
+        source: 'motion-scout-discovery',
+        status: 'missing',
+      }),
+    ]));
+  });
+}
 
 test('yoinkit map-gate --approve blocks a missing structured Motion Scout discovery matrix row', () => {
   const cwd = tempDir();
@@ -1092,6 +1151,29 @@ test('yoinkit map-gate --approve-exception creates a canonical Page model except
   expect(gate.inputHashes['page-model.json']).toBe(sha256File(path.join(config.runDir, 'page-model.json')));
 });
 
+test('yoinkit map-gate --approve-exception records an optional expiry stage', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-expiring-hero-crop',
+    '--reason', 'Hero crop exception expires before Capture.',
+    '--scope', 'region:region-hero',
+    '--expires-after-stage', 'map-gate',
+  ]);
+
+  expect(result.status).toBe(0);
+  const page = readJson(path.join(config.runDir, 'page-model.json'));
+  expect(page.exceptions).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'exception-expiring-hero-crop',
+      stage: 'map-gate',
+      expiresAfterStage: 'map-gate',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve-exception records freshness blockers when Report inputs are stale', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
@@ -1153,6 +1235,46 @@ test('yoinkit map-gate --approve-exception preserves live Page model edits when 
       source: 'report-freshness',
       status: 'missing',
     }),
+    expect.objectContaining({
+      id: 'page-model.json',
+      source: 'report-freshness',
+      status: 'stale',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve blocks forged approved map-gate exceptions added after Report v0', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticAssertions: [{
+      id: 'static-map-region-hero-desktop-crop',
+      kind: 'region-crop',
+      required: true,
+      status: 'fail',
+      evidence: ['crop missing'],
+      failure: 'required hero crop is missing',
+    }],
+  });
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.exceptions.push({
+    id: 'exception-forged-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Forged outside the gate command.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Report v0 is stale; rerun map-report');
+  expect(result.stderr).toContain('page-model.json');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.decision).toBe('blocked');
+  expect(gate.blockers).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: 'page-model.json',
       source: 'report-freshness',
@@ -1309,6 +1431,96 @@ test('yoinkit map-gate --approve blocks unapproved Page model exceptions', () =>
   ]));
 });
 
+const invalidApprovedExceptionRecords = [{
+  name: 'missing id',
+  record: {
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Missing id should not waive.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  },
+}, {
+  name: 'empty reason',
+  record: {
+    id: 'exception-empty-reason',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: '',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  },
+}, {
+  name: 'string scope',
+  record: {
+    id: 'exception-string-scope',
+    stage: 'map-gate',
+    scope: 'region:region-hero',
+    reason: 'Scope must be canonical JSON.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  },
+}, {
+  name: 'unsupported scope kind',
+  record: {
+    id: 'exception-unsupported-scope',
+    stage: 'map-gate',
+    scope: { kind: 'capture', id: 'region-hero' },
+    reason: 'Unsupported scope kind should not waive.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  },
+}, {
+  name: 'unknown region scope',
+  record: {
+    id: 'exception-unknown-region',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'does-not-exist' },
+    reason: 'Unknown Region should not waive.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  },
+}];
+
+for (const fixture of invalidApprovedExceptionRecords) {
+  test(`yoinkit map-gate --approve blocks invalid approved exception records: ${fixture.name}`, () => {
+    const cwd = tempDir();
+    const config = prepareGateRun(cwd, {
+      staticAssertions: [{
+        id: 'static-map-region-hero-desktop-crop',
+        kind: 'region-crop',
+        required: true,
+        status: 'fail',
+        evidence: ['crop missing'],
+        failure: 'required hero crop is missing',
+      }],
+    });
+    const pageModelFile = path.join(config.runDir, 'page-model.json');
+    const model = readJson(pageModelFile);
+    model.exceptions.push(JSON.parse(JSON.stringify(fixture.record)));
+    writeJson(pageModelFile, model);
+    runMapReport(config.runDir, { now: new Date('2026-06-17T13:14:00.000Z') });
+
+    const result = runGate(cwd, [config.runDir, '--approve']);
+
+    expect(result.status).toBe(1);
+    const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+    expect(gate.exceptionIds.every(id => typeof id === 'string' && id.trim())).toBe(true);
+    if (fixture.record.id) expect(gate.exceptionIds).not.toContain(fixture.record.id);
+    expect(gate.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'page-model-exceptions',
+        status: 'exception',
+      }),
+      expect.objectContaining({
+        id: 'static-map-region-hero-desktop-crop',
+        source: 'static-map-assertions',
+        status: 'fail',
+      }),
+    ]));
+  });
+}
+
 test('yoinkit map-gate requires final approval after approving a scoped Region exception', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
@@ -1384,6 +1596,65 @@ test('yoinkit map-gate requires final approval after approving a scoped Region e
     },
   });
   expect(gate.exceptionIds).toContain('exception-hero-crop');
+  expect(gate.exceptionWaivers).toEqual([
+    expect.objectContaining({
+      id: 'exception-hero-crop',
+      waived: expect.arrayContaining([
+        'static-map-region-hero-desktop-crop',
+        'region-hero',
+      ]),
+    }),
+  ]);
+  expect(gate.blockers).toEqual([]);
+});
+
+test('yoinkit map-gate records all blocker ids waived by one Region exception', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticAssertions: [{
+      id: 'static-map-region-hero-desktop-crop',
+      kind: 'region-crop',
+      required: true,
+      status: 'fail',
+      evidence: ['crop missing'],
+      failure: 'required hero crop is missing',
+    }],
+    motionAssertions: [{
+      id: 'motion-scout-region-hero-attachment',
+      kind: 'region-attachment',
+      required: true,
+      status: 'fail',
+      evidence: ['candidate unresolved'],
+      failure: 'required motion candidate is not attached',
+    }],
+  });
+
+  const exceptionResult = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-region',
+    '--reason', 'Human accepts all required blockers resolving to the Hero Region.',
+    '--scope', 'region:region-hero',
+  ]);
+  expect(exceptionResult.status).toBe(0);
+
+  const approvalResult = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(approvalResult.status).toBe(0);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.assertionSummary).toMatchObject({
+    failedRequired: 0,
+    exceptedRequired: 2,
+  });
+  expect(gate.exceptionWaivers).toEqual([
+    expect.objectContaining({
+      id: 'exception-hero-region',
+      waived: expect.arrayContaining([
+        'static-map-region-hero-desktop-crop',
+        'motion-scout-region-hero-attachment',
+      ]),
+    }),
+  ]);
+  expect(gate.exceptionWaivers[0].waived).toHaveLength(2);
   expect(gate.blockers).toEqual([]);
 });
 
@@ -1429,6 +1700,56 @@ test('yoinkit map-gate --approve keeps assertion exception ids scoped to their r
       id: 'motion-scout-unresolved-target',
       source: 'motion-scout-assertions',
       status: 'fail',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve does not let short Region ids absorb longer generated ids', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticAssertions: [{
+      id: 'static-map-region-hero-crop',
+      kind: 'region-crop',
+      required: true,
+      status: 'fail',
+      evidence: ['crop missing'],
+      failure: 'this id should not resolve to the shorter region id',
+    }],
+  });
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.viewports = [{ id: 'desktop', width: 1280, height: 800 }];
+  model.pages.home.regions[0].id = 'region';
+  model.pages.home.regions[0].source.primarySelector = 'main > section.region';
+  model.exceptions.push({
+    id: 'exception-short-region',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region' },
+    reason: 'Only the literal region id is waived.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:18:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.assertionSummary).toMatchObject({
+    failedRequired: 1,
+    exceptedRequired: 0,
+  });
+  expect(gate.exceptionWaivers).toEqual([
+    expect.objectContaining({
+      id: 'exception-short-region',
+      waived: [],
+    }),
+  ]);
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'static-map-region-hero-crop',
+      source: 'static-map-assertions',
     }),
   ]));
 });
@@ -1532,3 +1853,27 @@ test('runMapGate rejects direct rejection calls without a human-readable reason'
   expect(() => runMapGate(config.runDir, { action: 'reject' })).toThrow('map-gate --reject requires --reason');
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
+
+for (const decision of [{}, { action: 'aprove' }]) {
+  test(`runMapGate rejects direct calls with invalid action ${JSON.stringify(decision)}`, () => {
+    const cwd = tempDir();
+    const config = prepareGateRun(cwd);
+
+    expect(() => runMapGate(config.runDir, decision)).toThrow('requires one of approve, reject, or approve-exception');
+    expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+  });
+}
+
+for (const decision of [
+  { action: 'approve-exception', reason: 'Needs exception.', scope: 'region:region-hero' },
+  { action: 'approve-exception', exceptionId: 'exception-direct', scope: 'region:region-hero' },
+  { action: 'approve-exception', exceptionId: 'exception-direct', reason: 'Needs exception.' },
+]) {
+  test(`runMapGate rejects incomplete direct approve-exception call ${JSON.stringify(decision)}`, () => {
+    const cwd = tempDir();
+    const config = prepareGateRun(cwd);
+
+    expect(() => runMapGate(config.runDir, decision)).toThrow('map-gate --approve-exception requires');
+    expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+  });
+}
