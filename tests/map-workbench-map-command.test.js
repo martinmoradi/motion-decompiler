@@ -347,6 +347,54 @@ test('yoinkit map stops at the first failing stage and preserves completed artif
   expect(path.isAbsolute(status.runDir)).toBe(true);
 });
 
+test('yoinkit map stops at Static Map when no Region scaffold is produced', () => {
+  const cwd = tempDir();
+  const runDir = createRun(cwd);
+  const env = writeStageFixtures(cwd);
+  const staticMapFixture = path.join(cwd, 'fixtures', 'static-map-empty.json');
+  writeJson(staticMapFixture, { default: { candidates: [] } });
+  env.YOINKIT_STATIC_MAP_FIXTURE = staticMapFixture;
+
+  const result = runCli(cwd, ['map', runDir], env);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Static Map produced no Regions');
+  expect(fs.existsSync(path.join(runDir, '01-recon', 'page-state.json'))).toBe(true);
+  expect(fs.existsSync(path.join(runDir, '02-static-map', 'measurements.json'))).toBe(true);
+  expect(fs.existsSync(path.join(runDir, '03-motion-scout', 'motion-candidates.json'))).toBe(false);
+  expect(fs.existsSync(path.join(runDir, '03-motion-scout', 'stage-status.json'))).toBe(false);
+  expect(fs.existsSync(path.join(runDir, '04-map-report', 'index.html'))).toBe(false);
+
+  const status = readJson(path.join(runDir, '02-static-map', 'stage-status.json'));
+  expect(status).toMatchObject({
+    schemaVersion: 1,
+    stage: 'static-map',
+    status: 'failed',
+    error: 'Static Map produced no Regions',
+    errorName: 'StaticMapStageFailedError',
+  });
+});
+
+test('yoinkit map clears a stage failure status after a successful rerun', () => {
+  const cwd = tempDir();
+  const runDir = createRun(cwd);
+  const env = writeStageFixtures(cwd);
+  const emptyStaticMapFixture = path.join(cwd, 'fixtures', 'static-map-empty.json');
+  writeJson(emptyStaticMapFixture, { default: { candidates: [] } });
+
+  const failed = runCli(cwd, ['map', runDir], Object.assign({}, env, {
+    YOINKIT_STATIC_MAP_FIXTURE: emptyStaticMapFixture,
+  }));
+  expect(failed.status).toBe(1);
+  expect(fs.existsSync(path.join(runDir, '02-static-map', 'stage-status.json'))).toBe(true);
+
+  const passed = runCli(cwd, ['map', runDir], env);
+
+  expect(passed.status).toBe(0);
+  expect(fs.existsSync(path.join(runDir, '02-static-map', 'stage-status.json'))).toBe(false);
+  expect(fs.existsSync(path.join(runDir, '04-map-report', 'index.html'))).toBe(true);
+});
+
 test('yoinkit help presents the implemented Map workbench surface without legacy capture commands', () => {
   const cwd = tempDir();
 

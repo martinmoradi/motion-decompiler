@@ -421,6 +421,44 @@ test('static-map measures the effective Recon URL for retargeted iframe runs', (
   expect(measuredUrls).toEqual([iframeUrl]);
 });
 
+test('static-map ignores unusable about:blank Recon effective URLs', () => {
+  const cwd = tempDir();
+  const config = createRun(cwd);
+  const finalUrl = 'https://example.com/source';
+  runRecon(config.runDir, {
+    driver: fakeReconDriver({
+      desktop: readyReconSnapshot({
+        finalUrl,
+        effectiveUrl: 'about:blank',
+        retargetedFrom: finalUrl,
+        title: 'Iframe shell with blank effective URL',
+      }),
+    }),
+    now: new Date('2026-06-17T12:29:00.000Z'),
+  });
+
+  const measuredUrls = [];
+  runStaticMap(config.runDir, {
+    driver: {
+      measure(targetUrl) {
+        measuredUrls.push(targetUrl);
+        return {
+          candidates: [
+            measuredCandidate({
+              selector: 'main > section.hero',
+              semantic: { tagName: 'section', heading: 'Source hero' },
+              rect: { x: 0, y: 0, width: 1280, height: 500 },
+            }),
+          ],
+        };
+      },
+    },
+    now: new Date('2026-06-17T13:08:30.000Z'),
+  });
+
+  expect(measuredUrls).toEqual([finalUrl]);
+});
+
 test('static-map merges tiny candidates into the surrounding page outline', () => {
   const cwd = tempDir();
   const config = createRun(cwd);
