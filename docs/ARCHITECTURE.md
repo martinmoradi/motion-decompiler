@@ -95,8 +95,9 @@ One `yoink` pipeline, two capture modes, plus a separate downstream skill:
        fallbacks. It answers whether the visual evidence resembles the source.
      - **Region mode** adds artificial debug overlays: low-opacity tints, inset
        non-layout-affecting borders, hover outlines, labels, and tooltips with
-       Region name, rect, scroll-Y, viewport presence, and gaps. It answers
-       whether segmentation is correct.
+       Region name, rect, scroll-Y, viewport presence, and gaps. The debug
+       scaffold can scale down to fit the review pane while preserving measured
+       pixel metadata. It answers whether segmentation is correct.
      - **Gate mode** emphasizes missing, uncertain, or blocking items for the
        current approval gate. For Report v0, it answers what blocks Capture.
    - **Spec** (machine-facing serialization): the compact JSON the build phase

@@ -215,6 +215,12 @@ test('yoinkit map-report writes a portable static HTML projection with embedded 
   const config = prepareReportRun(cwd);
   const pageModelFile = path.join(config.runDir, 'page-model.json');
   const pageModel = readJson(pageModelFile);
+  pageModel.pages.home.dimensions.desktop = {
+    scrollWidth: 320,
+    scrollHeight: 100,
+    clientWidth: 320,
+    clientHeight: 100,
+  };
   const hero = pageModel.pages.home.regions.find(region => region.id === 'region-launch-faster');
   hero.static.assets.push({
     selector: 'main > section.hero img.escape',
@@ -253,11 +259,17 @@ test('yoinkit map-report writes a portable static HTML projection with embedded 
   expect(html).toContain('../../../etc/passwd');
   expect(html).not.toMatch(/href="[^"]*etc\/passwd/);
   expect(html).not.toContain('.report-mode { overflow: auto;');
+  expect(html).toContain('.report-mode { min-width: 0;');
   expect(html).toContain('<div class="source-stack">');
   expect(html).toContain('<article class="source-card" data-region-id="region-launch-faster">');
   expect(html).toContain('<div class="crop-frame" style="aspect-ratio:1280/620;">');
   expect(html).toContain('.region-crop { display: block; width: 100%; height: auto;');
   expect(html).toContain('object-fit: contain; object-position: left top;');
+  expect(html).toContain('<div class="debug-frame" data-debug-frame data-debug-width="1280" data-debug-height="692">');
+  expect(html).toContain('.debug-frame { --debug-scale: 1; width: 100%; min-width: 0; overflow: hidden;');
+  expect(html).toContain('transform: scale(var(--debug-scale)); transform-origin: top left;');
+  expect(html).toContain('window.requestAnimationFrame(fitDebugFrames);');
+  expect(html).toContain("window.addEventListener('resize', fitDebugFrames);");
   expect(html).toContain('<strong>hash</strong>');
   expect(html).toContain('style="left:0px;top:72px;width:1280px;height:620px;"');
 

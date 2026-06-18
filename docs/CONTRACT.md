@@ -1033,7 +1033,11 @@ Report v0 must support three view modes:
   answers whether the visual evidence resembles the source.
   Full-page stitched screenshots are not required in Report v0.
 - **Region mode**: artificial tints, inset non-layout-affecting borders, labels,
-  hover outlines, and tooltips. It answers whether segmentation is correct.
+  hover outlines, and tooltips. The debug scaffold may scale down to fit the
+  review pane without horizontal page scroll; measured pixel values remain in the
+  Page model and metadata tooltips. Its dimensions must include the full measured
+  Region extents even when recorded document dimensions are smaller. It answers
+  whether segmentation is correct.
 - **Gate mode**: missing, uncertain, failed, or blocking items emphasized. For
   Report v0, this includes failed assertions, incomplete coverage rows, unknowns,
   unapproved exceptions, and motion candidates that need human attention. It
