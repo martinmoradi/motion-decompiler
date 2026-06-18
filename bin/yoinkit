@@ -3946,15 +3946,8 @@ function mapGateCommand(argv) {
       throw new Error(`map-gate --${action} does not accept ${optionName[name]}${hint}`);
     }
   }
-  if (flags.reject && !(typeof flags.reason === 'string' && flags.reason.trim())) {
-    throw new Error('map-gate --reject requires --reason with a human-readable reason');
-  }
-  if (flags.approveException && !(typeof flags.reason === 'string' && flags.reason.trim())) {
-    throw new Error('map-gate --approve-exception requires --reason with a human-readable reason');
-  }
-  if (flags.approveException && !(typeof flags.scope === 'string' && flags.scope.trim())) {
-    throw new Error('map-gate --approve-exception requires --scope <kind:id>');
-  }
+  // Required-value validation (reason/scope presence) lives in runMapGate's
+  // validateDecision; the CLI only owns arg shape and flag hygiene.
   const runDir = path.resolve(positionals[0]);
   const gate = runMapWorkbenchMapGate(runDir, {
     action,
