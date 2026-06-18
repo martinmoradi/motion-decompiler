@@ -201,7 +201,7 @@ In extension mode the engine does **not** auto-scan. It announces
 ([:1855-1928](../../source/cli/engine/browser/injected/index.mjs)). That `ready`
 handshake is the fix for the "tried to use the engine before it loaded" race, which
 is the exact failure mode of YoinkIt's "arm before `__cap` exists" (covered for the
-extension surface in [`02-chrome-extension.md`](02-chrome-extension.md)).
+extension surface in [`02-chrome-extension.md`](../02-chrome-extension/02-chrome-extension.md)).
 
 ---
 
