@@ -98,7 +98,7 @@ moved between the two produces an honest `stale selector` rather than a wrong
 measurement. This is the detector's lighter-weight cousin of live mode's dual
 locator (durable structural ref + tolerant text-needle snapshot, re-resolved
 id-first after an HMR reload), documented in
-[`04-live-mode-manual-edits.md`](04-live-mode-manual-edits.md).
+[`03d-overlay-picker-and-locators.md`](../03-live-mode/03d-overlay-picker-and-locators.md).
 
 ---
 
@@ -217,7 +217,7 @@ extension surface in [`02-chrome-extension.md`](02-chrome-extension.md)).
   YoinkIt's timed-capture recipe (settle, arm, trigger, wait, dump), the element can
   move between arm and trigger; re-resolving beats trusting the arm-time ref. The
   stronger version (dual locator with text-needle fallback) is in
-  [`04`](04-live-mode-manual-edits.md), worth reading before building `on(sel)`.
+  [`03d`](../03-live-mode/03d-overlay-picker-and-locators.md), worth reading before building `on(sel)`.
 - **STEAL footprint scrubbing into `scan()`/`dump()`.** Exclude YoinkIt's own
   toolbar and injected markers, and (cheaply) skip agent-browser and
   Claude-in-Chrome nodes by id prefix, so a capture never measures the tool. The
