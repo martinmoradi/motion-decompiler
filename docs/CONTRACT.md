@@ -556,17 +556,20 @@ Names are part of the capture and implementation handoff and are reviewed at the
 Map Gate.
 
 Region source evidence stores both `primarySelector` and `selectors[]`.
-`primarySelector` is the best stable selector for reruns and crops; `selectors[]`
-records supporting selector evidence. If no stable primary selector exists, store
-`primarySelector: null` with a reason rather than inventing one.
+`primarySelector` is the best stable selector for reruns and crop alignment;
+`selectors[]` records supporting selector evidence. If no stable primary
+selector exists, store `primarySelector: null` with a reason rather than
+inventing one.
 Generated ids such as Webflow `#w-node-*` must not drive Region identity and
 should be avoided as `primarySelector` when a better selector exists, but they may
 appear in `selectors[]` as supporting evidence.
 
-Static Map v0 attempts a crop for every present Region at every measured
-viewport. The Region stores either a crop path or `null + reason`. A missing crop
-does not delete the Region, but it is a required Map Gate item unless marked out
-of scope or approved as an exception.
+Static Map v0 attempts viewport-aligned visual evidence for every present Region
+at every measured viewport: align the Region's primary selector to the top of the
+browser viewport, then save the resulting viewport screenshot. The Region stores
+either a crop path or `null + reason`. A missing crop does not delete the Region,
+but it is a required Map Gate item unless marked out of scope or approved as an
+exception.
 
 Static Map v0 downloads same-origin assets for every present Region when they
 are safely fetchable, stores them under `02-static-map/assets/`, and records
@@ -817,10 +820,10 @@ Minimum Region v0 shape:
       "crop": {
         "path": "02-static-map/crops/desktop/region-hero.png",
         "width": 1280,
-        "height": 760,
+        "height": 800,
         "bytes": 12345,
         "selector": "main > section.hero",
-        "method": "agent-browser-selector-screenshot"
+        "method": "agent-browser-viewport-screenshot"
       }
     }
   },
@@ -1022,11 +1025,11 @@ before returning.
 
 Report v0 must support three view modes:
 
-- **Source mode**: Region crops placed first in a scroll-accurate scaffold,
-  exact Region positions, correctly sized Region placeholders, and minimal debug
-  overlay. Measured colors, typography, and assets are fallbacks when crops are
-  missing, not a page reconstruction engine. It answers whether the static
-  scaffold resembles the source.
+- **Source mode**: viewport-aligned Region screenshots placed first in a
+  scroll-accurate scaffold, exact Region positions, correctly sized Region
+  placeholders, and minimal debug overlay. Measured colors, typography, and
+  assets are fallbacks when crops are missing, not a page reconstruction engine.
+  It answers whether the static scaffold resembles the source.
   Full-page stitched screenshots are not required in Report v0.
 - **Region mode**: artificial tints, inset non-layout-affecting borders, labels,
   hover outlines, and tooltips. It answers whether segmentation is correct.
