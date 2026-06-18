@@ -26,6 +26,7 @@ const {
 } = require('../lib/map-workbench/motion-scout');
 const { runMapReport: runMapWorkbenchMapReport } = require('../lib/map-workbench/map-report');
 const { runMapGate: runMapWorkbenchMapGate } = require('../lib/map-workbench/map-gate');
+const { runPreGateMap } = require('../lib/map-workbench/map-sequence');
 
 const ROOT = path.resolve(__dirname, '..');
 const AB = path.join(ROOT, 'bin', 'capture-browser');
@@ -39,52 +40,27 @@ const DEFAULT_OPEN_DELAY_MS = 750;
 let lastOpenAt = 0;
 
 function usage() {
+  const initHelp = initUsageText().replace(/^yoinkit /, 'bin/yoinkit ');
   console.log(`yoinkit
 
+Implemented flow:
+  init -> map -> map-gate
+
 Usage:
-  bin/yoinkit scout <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--max-hover-captures 10] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
-  bin/yoinkit yoink <url> [--viewport 1280x800] [--slug name] [--runs-dir runs] [--max-hover-captures 10] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
-  bin/yoinkit yoink <run-dir> [manifest.json] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
-  ${initUsageText()}
+  ${initHelp}
+  bin/yoinkit map <run-dir>
+  bin/yoinkit map-gate <run-dir> --approve [--note "..."]
+  bin/yoinkit map-gate <run-dir> --reject --reason "..."
+  bin/yoinkit map-gate <run-dir> --approve-exception <exception-id> --reason "..." --scope <kind:id>
+
+Direct Map workbench stage reruns:
   bin/yoinkit recon <run-dir>
   bin/yoinkit static-map <run-dir>
   bin/yoinkit motion-scout <run-dir>
   bin/yoinkit map-report <run-dir>
-  bin/yoinkit map-gate <run-dir> --approve [--note "..."]
-  bin/yoinkit map-gate <run-dir> --reject --reason "..."
-  bin/yoinkit map-gate <run-dir> --approve-exception <exception-id> --reason "..." --scope <kind:id>
-  bin/yoinkit map <run-dir>
-  bin/yoinkit plan <run-dir> [--out manifest.proposed.json] [--max-hover-captures 10]
-  bin/yoinkit capture <run-dir> [manifest.json] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
-  bin/yoinkit assemble <run-dir>
-  bin/yoinkit report <run-dir>
-  bin/yoinkit run <manifest.json> [--slug name] [--runs-dir runs] [--keep-open] [--ready-timeout-ms 8000] [--capture-strategy reuse-page]
 
-Readiness/rate-limit options:
-  --ready-timeout-ms N   wait this long for real page content before mapping/capturing
-  --ready-stable-ms N    require a stable DOM/text snapshot for this long
-  --open-delay-ms N      polite delay between fresh page opens
-  --no-ready-wait        skip page-state readiness checks
-  --capture-strategy S   reuse-page (default) or fresh
-  --fresh-captures       shorthand for --capture-strategy fresh
-
-Capture-repair loop (off by default; inert unless a provider is configured):
-  --repair-cmd CMD       external provider: \`CMD <input.json>\` writes output.json,
-                         prints its path on stdout (design §5)
-  --repair-max-retries N per-capture retries (default 2)
-  --repair-budget N      per-run attempt ceiling (default min(2×repairable, 24))
-  --repair-confidence-floor F  skip a retry below this provider confidence (default 0.4)
-  --repair-causes LIST   comma list of repairable buckets
-                         (default occlusion,hidden_not_visible,inert_representative)
-  --repair-dump          write the §2 diagnosis input + viewport screenshot for
-                         each repairable soft-fail and STOP (no provider, no
-                         re-measure). Decouples diagnosis from the loop so an
-                         external orchestrator can diagnose in parallel.
-
-Manifest capture examples:
-  { "id": "work-card-hover", "type": "hover", "root": "a.work_home_item_link", "waitMs": 1200 }
-  { "id": "faq-accordion", "type": "click", "root": "div.g_faq_item.w-dyn-item", "action": "click div.g_faq_item.w-dyn-item", "waitMs": 900 }
-  { "id": "hero-load", "type": "boot", "boot": { "selectors": ["h1", "[class*=split]"], "ms": 4000 }, "waitMs": 4300 }
+Capture, full yoink, Spec generation, implementation, Report edit-back, and
+later improve loops are out of scope for this implemented command surface.
 `);
 }
 
@@ -3973,17 +3949,18 @@ function mapGateCommand(argv) {
 }
 
 function mapCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
+  const { help, positionals } = parseRunDirOnlyArgs(argv, 'map');
+  if (help || positionals.length !== 1) {
+    console.log('yoinkit map <run-dir>');
+    process.exit(help ? 0 : 1);
   }
   const runDir = path.resolve(positionals[0]);
-  ensureRunDir(runDir);
-  const { manifest } = loadManifest(runDir);
-  const map = runMap(runDir, manifest, flags);
-  console.log(`Saved ${path.join(runDir, 'map.json')}`);
-  console.log(`${(map.libs || []).join(', ') || 'No libraries detected'}; ${(map.hoverCandidates || []).length} hover candidates`);
+  const result = runPreGateMap(runDir, {
+    reconDriver: reconDriverFromEnv(),
+    staticMapDriver: staticMapDriverFromEnv(),
+    motionScoutDriver: motionScoutDriverFromEnv(),
+  });
+  console.log(result.artifacts.report);
 }
 
 function captureCommand(argv) {
@@ -4109,20 +4086,13 @@ function main() {
     process.exit(command ? 0 : 1);
   }
 
-  if (command === 'scout') scoutCommand(rest);
-  else if (command === 'yoink') yoinkCommand(rest);
-  else if (command === 'init') initCommand(rest);
+  if (command === 'init') initCommand(rest);
   else if (command === 'recon') reconCommand(rest);
   else if (command === 'static-map') staticMapCommand(rest);
   else if (command === 'motion-scout') motionScoutCommand(rest);
   else if (command === 'map-report') mapReportCommand(rest);
   else if (command === 'map-gate') mapGateCommand(rest);
   else if (command === 'map') mapCommand(rest);
-  else if (command === 'plan') planCommand(rest);
-  else if (command === 'capture') captureCommand(rest);
-  else if (command === 'assemble') assembleCommand(rest);
-  else if (command === 'report') reportCommand(rest);
-  else if (command === 'run') runCommand(rest);
   else throw new Error(`Unknown command: ${command}`);
 }
 
