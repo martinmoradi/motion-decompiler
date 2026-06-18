@@ -1316,6 +1316,7 @@ test('yoinkit map-gate --approve-exception creates a canonical Page model except
   });
   expect(gate.exceptionIds).toContain('exception-hero-crop');
   expect(gate.inputHashes['page-model.json']).toBe(sha256File(path.join(config.runDir, 'page-model.json')));
+  expect(gate.updatedAt).toBe(page.exceptions[0].approvedAt);
   expect(gate.blockers).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: 'page-model.json',
