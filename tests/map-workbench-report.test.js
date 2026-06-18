@@ -166,8 +166,13 @@ function prepareReportRun(cwd, options = {}) {
           ],
         };
       },
-      captureRegionCrop({ outputFile }) {
+      captureRegionCrop({ outputFile, viewport }) {
         if (captureCrops) writeTinyPng(outputFile);
+        return {
+          method: 'agent-browser-viewport-screenshot',
+          width: viewport.width,
+          height: viewport.height,
+        };
       },
     },
     now: new Date('2026-06-17T12:30:00.000Z'),
@@ -250,6 +255,7 @@ test('yoinkit map-report writes a portable static HTML projection with embedded 
   expect(html).not.toContain('.report-mode { overflow: auto;');
   expect(html).toContain('<div class="source-stack">');
   expect(html).toContain('<article class="source-card" data-region-id="region-launch-faster">');
+  expect(html).toContain('<div class="crop-frame" style="aspect-ratio:1280/620;">');
   expect(html).toContain('.region-crop { display: block; width: 100%; height: auto;');
   expect(html).toContain('object-fit: contain; object-position: left top;');
   expect(html).toContain('<strong>hash</strong>');
