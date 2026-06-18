@@ -1209,6 +1209,12 @@ test('yoinkit map-gate --approve blocks when no viewport can be resolved for dis
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('motion-scout-discovery:viewports');
   const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: {
+      incompleteRequired: 0,
+      viewportsResolved: false,
+    },
+  });
   expect(gate.blockers).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: 'motion-scout-discovery:viewports',
