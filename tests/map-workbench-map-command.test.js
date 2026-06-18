@@ -96,6 +96,14 @@ function blockedReconSnapshot() {
   });
 }
 
+function loadingReconSnapshot() {
+  return Object.assign({}, readyReconSnapshot(), {
+    title: 'Loading page',
+    readiness: { status: 'loading', readyState: 'interactive', textLength: 24 },
+    blockers: [],
+  });
+}
+
 function measuredCandidate() {
   return {
     selector: 'main > section.hero',
@@ -204,6 +212,31 @@ test('yoinkit map stops at Recon when Recon reports a real blocker', () => {
     error: 'Recon blocked: challenge (verify you are human)',
     errorName: 'ReconBlockedError',
   });
+});
+
+test('yoinkit map attributes non-ready Recon results to Recon', () => {
+  const cwd = tempDir();
+  const runDir = createRun(cwd);
+  const reconFixture = path.join(cwd, 'fixtures', 'recon-loading.json');
+  writeJson(reconFixture, { default: loadingReconSnapshot() });
+
+  const result = runCli(cwd, ['map', runDir], { YOINKIT_RECON_FIXTURE: reconFixture });
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Recon not ready');
+  expect(fs.existsSync(path.join(runDir, '01-recon', 'page-state.json'))).toBe(true);
+  expect(fs.existsSync(path.join(runDir, '02-static-map', 'measurements.json'))).toBe(false);
+  expect(fs.existsSync(path.join(runDir, '02-static-map', 'stage-status.json'))).toBe(false);
+  expect(fs.existsSync(path.join(runDir, '04-map-report', 'index.html'))).toBe(false);
+
+  const status = readJson(path.join(runDir, '01-recon', 'stage-status.json'));
+  expect(status).toMatchObject({
+    schemaVersion: 1,
+    stage: 'recon',
+    status: 'not-ready',
+    errorName: 'ReconNotReadyError',
+  });
+  expect(status.error).toContain('Recon not ready');
 });
 
 test('yoinkit map stops at the first failing stage and preserves completed artifacts', () => {
