@@ -732,8 +732,11 @@ CSS keyframes, split reveals, hover affordances, loops, and scroll-trigger
 sources. They gate discovery coverage, not motion fidelity. `complete` means the
 source was inspected for that viewport, even when it found zero candidates.
 `missing` blocks the Map Gate when the source was not inspected or could not be
-inspected. `out_of_scope` must carry an explicit reason. `info` is only
-non-blocking context and is not a substitute for required coverage.
+inspected. Only `complete` clears a required discovery row: a producer
+`out_of_scope` status is not a canonical waiver and still blocks, because
+discovery rows are page-global (source by viewport) and v0 has no exception scope
+that can waive them — a required source must actually be inspected. `info` is
+only non-blocking context and is not a substitute for required coverage.
 
 Coverage Markdown and assertion JSON are generated from a shared in-memory model.
 Markdown is optimized for human scanning; JSON is optimized for deterministic

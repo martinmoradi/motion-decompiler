@@ -928,6 +928,41 @@ for (const status of ['pass', 'passed']) {
   });
 }
 
+test('yoinkit map-gate --approve does not let producer out-of-scope waive a required discovery source', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const candidatesFile = path.join(motionScoutDir(config.runDir), 'motion-candidates.json');
+  const candidates = readJson(candidatesFile);
+  candidates.discovery.inspections = candidates.discovery.inspections.map(row => (
+    row.source === 'css-keyframes' && row.viewportId === 'desktop'
+      ? Object.assign({}, row, {
+        status: 'out_of_scope',
+        completed: false,
+        reason: 'Producer marked this source out of scope without a canonical exception.',
+      })
+      : row
+  ));
+  writeJson(candidatesFile, candidates);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:18:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('css-keyframes');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.coverageSummary).toMatchObject({
+    motionScout: { incompleteRequired: 1 },
+  });
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'css-keyframes:desktop',
+      source: 'motion-scout-discovery',
+      status: 'missing',
+      message: 'Producer marked this source out of scope without a canonical exception.',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve blocks a missing structured Motion Scout discovery matrix row', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
