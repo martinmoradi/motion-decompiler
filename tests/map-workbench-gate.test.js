@@ -1541,6 +1541,82 @@ test('yoinkit map-gate --approve-exception rejects cross-stage exception id coll
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
 
+test('yoinkit map-gate --approve blocks duplicate map-gate exception ids', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.exceptions.push({
+    id: 'exception-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'First approved record.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  }, {
+    id: 'exception-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Second approved record.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:01:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:16:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('exception-hero-crop');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'exception-hero-crop',
+      source: 'page-model-exceptions',
+      status: 'duplicate',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve-exception rejects duplicate same-stage exception ids', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const pageModelFile = path.join(config.runDir, 'page-model.json');
+  const model = readJson(pageModelFile);
+  model.exceptions.push({
+    id: 'exception-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'First approved record.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:00:00.000Z',
+  }, {
+    id: 'exception-hero-crop',
+    stage: 'map-gate',
+    scope: { kind: 'region', id: 'region-hero' },
+    reason: 'Second approved record.',
+    approvedBy: 'human',
+    approvedAt: '2026-06-17T13:01:00.000Z',
+  });
+  writeJson(pageModelFile, model);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:17:00.000Z') });
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-crop',
+    '--reason', 'This should not pick one duplicate record.',
+    '--scope', 'region:region-hero',
+  ]);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('already exists more than once for stage map-gate');
+  expect(readJson(pageModelFile).exceptions).toEqual([
+    expect.objectContaining({ reason: 'First approved record.' }),
+    expect.objectContaining({ reason: 'Second approved record.' }),
+  ]);
+  expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
+});
+
 test('yoinkit map-gate --approve-exception rejects unsupported scope kinds', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
