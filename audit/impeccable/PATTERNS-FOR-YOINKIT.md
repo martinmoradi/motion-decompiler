@@ -19,7 +19,7 @@ YoinkIt maintains `skill/codex/` and `skill/claude/` by hand. Impeccable maintai
 ### A1. Author once, compile to N harnesses: STEAL
 **Impeccable:** `skill/SKILL.src.md` plus a `reference/` tree is the only authored skill. A pure-Node build (`scripts/build.js`) drives `scripts/lib/transformers/*` to stamp it into every provider directory. Everything provider-specific is data in two tables: `PROVIDERS` (config dir, frontmatter fields, hook target, agent format) in `scripts/lib/transformers/providers.js`, and `PROVIDER_PLACEHOLDERS` (model name, config file, ask-instruction, command prefix) in `scripts/lib/utils.js`. The transform path is identical for all providers; per-target output comes from a placeholder pass plus conditional blocks. The whole machine is about 170 lines (`scripts/lib/transformers/factory.js`). Adding a harness is one `PROVIDERS` row plus one placeholder row.
 **YoinkIt:** Replace the two hand-copied skill dirs with one `SKILL.src.md` and a transformer. YoinkIt's per-harness differences are small (driver adapter, ask syntax, command prefix), which is exactly what the placeholder plus conditional-block system handles.
-**Refs:** `scripts/lib/transformers/{factory,providers,index}.js`, `scripts/lib/utils.js:714-754`. See [report 05](reports/05-skill-harness-distribution.md).
+**Refs:** `scripts/lib/transformers/{factory,providers,index}.js`, `scripts/lib/utils.js:714-754`. See [report 04a](reports/04-skill-harness/04a-single-source-transform.md).
 
 ### A2. Conditional inline blocks for the ~5% that differs: STEAL
 **Impeccable:** The body uses `<codex>...</codex>`-style tagged blocks that are kept or stripped per provider (`compileProviderBlocks`, `scripts/lib/utils.js:662-674`). Verified in generated output: a Gemini-only rule is present in `.gemini` and absent in `.claude`; the `$` command prefix appears only for Codex.
@@ -39,7 +39,7 @@ YoinkIt maintains `skill/codex/` and `skill/claude/` by hand. Impeccable maintai
 ### A5. Commit generated harness output, keep PRs source-first: ADAPT
 **Impeccable:** The 13 generated directories are committed (so submodule and `npx skills` installs read them directly), but development PRs are source-first, generated output is synced on release, and CI keeps generated diffs out of feature PRs.
 **YoinkIt:** Decide deliberately. Committing generated output simplifies install but pollutes diffs. Impeccable's compromise (source-first PRs, release-time sync, CI guard) is a sane default if you want zero-build installs.
-**Refs:** see [report 05](reports/05-skill-harness-distribution.md), the "generated output committed" policy.
+**Refs:** see [report 04e](reports/04-skill-harness/04e-distribution-and-install.md), the "generated output committed" policy.
 
 ---
 
@@ -210,7 +210,7 @@ YoinkIt already ships an MV3 extension. These are the hardening patterns Impecca
 ### F1. A once-per-session boot script that prints explicit STOP / NEXT STEP directives: STEAL
 **Impeccable:** `skill/scripts/context.mjs` runs once at skill start, loads `PRODUCT.md` / `DESIGN.md`, and prints either the loaded context plus a `NEXT STEP:` directive or an explicit `NO_PRODUCT_MD` stop directive. It deliberately never relies on empty stdout as a signal, because cheaper models miss that. A free update check rides along (no extra round trip, anti-nag, opt-out).
 **YoinkIt:** YoinkIt's map→capture pipeline has setup state (which browser driver, which viewport set, prior runs). A deterministic boot script that loads that state and prints the next action makes the multi-step skill far more reliable across models. The "never signal with empty output" rule is a real finding about cheap models.
-**Refs:** `skill/scripts/context.mjs:200-262`. See [report 05 finding 4](reports/05-skill-harness-distribution.md).
+**Refs:** `skill/scripts/context.mjs:235-262`. See [report 04c](reports/04-skill-harness/04c-runtime-routing-and-context.md).
 
 ### F2. Wire deterministic checks into provider-native hooks: ADAPT (longer-term)
 **Impeccable:** Hooks run the detector automatically on edits. Two models share one core (`hook-lib.mjs`): a post-edit *surface* (Claude Code, Codex) injects findings back as context, and a pre-write *block* (Cursor) denies bad writes before they land. The central contract is "never break the agent's turn": every failure path is fail-open. Anti-nag machinery (dedup cache, edit-count suppression, a deny-to-allow loop-breaker after repeated denials) keeps it from becoming noise.
