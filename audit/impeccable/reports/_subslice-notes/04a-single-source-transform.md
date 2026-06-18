@@ -1,0 +1,55 @@
+# Subslice 04a Cross-Check Notes
+
+Target: `audit/impeccable/reports/04-skill-harness/04a-single-source-transform.md`
+Parent context: `audit/impeccable/reports/04-skill-harness/04-skill-harness.md`
+Source root: `/home/martin/src/perso/yoinkit/audit/impeccable/source`
+
+## Executive Delta
+
+- The main architecture claim is confirmed: one `skill/SKILL.src.md` plus source assets compiles through `createTransformer(config)` into 13 provider targets, with provider variation carried by `PROVIDERS` and `PROVIDER_PLACEHOLDERS`.
+- Keep the leaf's core YoinkIt recommendation: `SKILL.src.md`, a provider table, a placeholder identity table, and standalone `<provider>` blocks are the right pattern to delete YoinkIt's hand-synced `skill/codex/` and `skill/claude/` copies.
+- Apply three targeted corrections: plugin output count wording, `pin.mjs` placeholder behavior, and the `stripRuleMarkers` blank-line explanation.
+- Environment note: the resolver failed in this worktree because `audit/impeccable/source` is absent. I verified against the main checkout's clone at the source root above. In this worktree, every `../../source/...` markdown link in the leaf is broken until that clone exists locally.
+
+## Corrections To Apply
+
+| Report area | Current claim | Evidence | Suggested change |
+|---|---|---|---|
+| Section 4, `SKILL.src.md` naming dodge | "Verified: the repo contains exactly one `skill/SKILL.src.md` (the source) and 12 committed `*/skills/impeccable/SKILL.md` compiled outputs." | `git ls-files '*/skills/impeccable/SKILL.md' '.*/skills/impeccable/SKILL.md'` lists 13 tracked files: 12 root harness outputs plus `plugin/skills/impeccable/SKILL.md`. `.codex` has only `.codex/hooks.json`. `scripts/build.js:643-647` excludes `.codex` from root sync, while `scripts/build.js:741-745` copies the Claude skill into `plugin/skills/impeccable`. | Say "12 root harness `SKILL.md` outputs, plus the plugin-packaged Claude skill copy under `plugin/skills/impeccable`; `.codex` has only hooks at repo root." This preserves the 13 -> 12 -> plugin distinction without implying the plugin copy does not exist. |
+| Section 5, markdown-only pipeline / copied scripts | The leaf says the compiled `pin.mjs` still contains `{{command_prefix}}` because `pin.mjs` "resolves the prefix itself at runtime from the harness it finds." | `scripts/lib/transformers/factory.js:260-267` copies scripts verbatim. `skill/scripts/pin.mjs:90-106` generates pinned skill content containing literal `{{command_prefix}}`; it does not detect or substitute the active harness prefix. The compiled `.claude/skills/impeccable/scripts/pin.mjs:103-105` still contains the token. The parent overview already frames this as a latent Codex bug. | Keep the "scripts are copied verbatim" fact, but remove the self-resolve explanation. Suggested replacement: "`pin.mjs` is copied verbatim and currently writes literal `{{command_prefix}}` into generated pinned skills; this is harmless for slash-prefix harnesses but wrong for Codex unless fixed in `04d`." |
+| Section 8, `stripRuleMarkers` blank-line behavior | The leaf says standalone marker lines collapse because "the blank-line normalization inside `compileProviderBlocks` reaps" them after stripping. | The actual order is `compileProviderBlocks` -> `replacePlaceholders` -> `stripRuleMarkers` in `scripts/lib/transformers/factory.js:228-235`. `compileProviderBlocks` does its 3-plus newline collapse before returning at `scripts/lib/utils.js:662-673`; it cannot normalize blank lines introduced later by `stripRuleMarkers` at `scripts/lib/utils.js:689-690`. A source scan found 99 `<!-- rule:... -->` markers, all inline, and no standalone marker lines under `skill/SKILL.src.md` or `skill/reference/`. | Reword this as: "Current source markers are inline, so stripping removes marker text without creating meaningful blank holes. If standalone marker lines are introduced later, add a post-`stripRuleMarkers` newline normalization or accept the extra blank line." |
+| Link/source-root assumptions | The report's source links point at `../../source/...`, but this worktree lacks `audit/impeccable/source`. | `node skill/subslice/scripts/resolve-subslice.mjs 04a` failed with `Source root not found: audit/impeccable/source`. Link sweep found 8 unique `../../source/...` targets missing in this worktree, but all 8 exist under `/home/martin/src/perso/yoinkit/audit/impeccable/source`. | Either ensure the integration worktree has `audit/impeccable/source`, or make the report/notes explicit that source links require the local audit source clone. |
+
+## Deep Implementation Notes
+
+- Confirmed file-map counts: `skill/SKILL.src.md` is 186 lines, `scripts/lib/utils.js` is 852, `scripts/lib/transformers/factory.js` is 326, `scripts/lib/transformers/providers.js` is 122, `scripts/lib/sub-pages-data.js` is 334, `scripts/lib/transformers/hooks.js` is 120, and `skill/scripts/command-metadata.json` is 94.
+- `readSourceFiles(rootDir)` is correctly described. It looks for `skill/SKILL.src.md` at `scripts/lib/utils.js:249-255`, parses it with `parseFrontmatter` at `utils.js:128`, collects root-level `skill/reference/*.md` at `utils.js:261-273`, merges `skill/scripts/**` with the detector bundle at `utils.js:278-283`, reads `skill/agents/*.md` at `utils.js:285-316`, and pushes the one skill object at `utils.js:318-333`.
+- The vendored detector-bundle description is accurate. `DETECTOR_BUNDLE_DIR = 'cli/engine'` at `utils.js:12`; `DETECTOR_EXTERNAL_DEPS` copies `cli/lib/impeccable-config.mjs` to `lib/impeccable-config.mjs` at `utils.js:21-23`; `readDetectorBundleScripts` adds generated script entries at `utils.js:55-93`.
+- `PROVIDERS` has 13 rows in `scripts/lib/transformers/providers.js:12-122`. The important indirections are exactly as the leaf says: `agents.placeholderProvider = 'codex'` at `providers.js:55-62`, `github.placeholderProvider = 'agents'` at `providers.js:64-70`, and `trae-cn.placeholderProvider = 'trae'` at `providers.js:100-106`.
+- `PROVIDER_PLACEHOLDERS` has 11 keys at `scripts/lib/utils.js:564-631`, excluding `github` and `trae-cn`. `PROVIDER_BLOCK_TAGS` has 14 tags at `utils.js:633-648`.
+- The 5-stage body pipeline is confirmed at `scripts/lib/transformers/factory.js:228-236`: compile blocks, replace placeholders, strip rule markers, replace `{{scripts_path}}`, then optional `bodyTransform`. Reference markdown gets the same placeholder/block/marker/script-path treatment at `factory.js:246-255`. Scripts do not.
+- The conditional-block examples are confirmed. Source blocks are `<codex>` at `skill/SKILL.src.md:42-45`, `<gemini>` at `69-71`, and `<codex>` at `100-108`. Generated output contains the Codex typography paragraph in `.agents/skills/impeccable/SKILL.md:39`, and the Gemini image-hover ban only in `.gemini/skills/impeccable/SKILL.md:60` among the checked root outputs.
+- `{{available_commands}}` is correctly described as a curated 19. `IMPECCABLE_SUB_COMMANDS` lives at `utils.js:708-712`. `skill/reference/audit.md:98` and `:117` contain `{{available_commands}}`; the compiled `.claude/skills/impeccable/reference/audit.md:98` and `:117` expand it to the 19-command slash-prefixed list and omit `craft`, `init`, `extract`, and `live`.
+- The `{{command_hint}}` grouping is confirmed. `factory.js:208-224` reads `command-metadata.json` keys and groups through `SKILL_CATEGORIES` and `CATEGORY_ORDER` from `sub-pages-data.js:47-80`. The generated groups are `craft|shape`, `audit|critique`, `animate|bolder|colorize|delight|layout|overdrive|quieter|typeset`, `adapt|clarify|distill`, `harden|onboard|optimize|polish`, and `init|document|extract|live`, joined with the generated middle-dot separator in frontmatter. This is metadata key order within category, not declaration order in `SKILL_CATEGORIES`.
+- Frontmatter dispatch is correct. `FIELD_SPECS` is at `factory.js:23-51`, the active-field loop is at `factory.js:202-206`, and generated frontmatter confirms Cursor and Kiro emit `license` only, Gemini emits no optional fields, GitHub emits `user-invocable`, `argument-hint`, and `license`, and Claude/OpenCode emit `allowed-tools` too.
+- Build orchestration supports the parent overview. `scripts/build.js:623-627` iterates all `PROVIDERS`; `build.js:643-647` excludes `.codex` from root sync; `build.js:681-697` removes deprecated local skills; `build.js:701-761` builds the plugin subtree.
+
+## Paradigms Worth Importing
+
+- Use `SKILL.src.md` as the authoring file and reserve `SKILL.md` for generated harness output. The source code comment at `utils.js:242-247` gives the exact installer-discovery rationale and is worth copying into YoinkIt's build.
+- Treat harness differences as data: a `PROVIDERS` table for "how to emit" and a placeholder table for "who the provider is." For YoinkIt, start with Claude and Codex/Codex-repo rows, then add future harnesses as table rows.
+- Keep provider conditionals as standalone tags on their own lines. `compileProviderBlocks` is safe for YoinkIt because inline HTML references such as `<element>` will not match the own-line fence regex at `utils.js:664`.
+- Keep build-time substitution markdown-only unless there is a deliberate script templating contract. The Impeccable `pin.mjs` issue is the cautionary case: copied scripts containing template tokens are not magically compiled.
+- Use rule markers as author-time eval anchors, but either keep them inline or add a post-strip whitespace cleanup if YoinkIt introduces standalone marker lines.
+
+## Link And Citation Checks
+
+- The leaf's sibling report links resolve in this worktree: `04-skill-harness.md`, `04b-build-pipeline-and-validators.md`, `04c-runtime-routing-and-context.md`, `04d-command-metadata-and-pin.md`, `04e-distribution-and-install.md`, and `../01-detector-engine/01-detector-engine.md`.
+- The 8 unique `../../source/...` links do not resolve in this worktree because `audit/impeccable/source` is absent. The same targets do exist under `/home/martin/src/perso/yoinkit/audit/impeccable/source`: `skill/SKILL.src.md`, `scripts/lib/utils.js`, `scripts/lib/transformers/factory.js`, `scripts/lib/transformers/providers.js`, `scripts/lib/sub-pages-data.js`, `skill/scripts/command-metadata.json`, `scripts/lib/transformers/hooks.js`, and `skill/reference/audit.md`.
+- No `<!-- rule:... -->` markers were found in committed generated `SKILL.md`/reference markdown under the checked harness outputs. Plain `rule:` strings do exist in copied scripts such as `hook-admin.mjs`, so keep the report wording specific to rule markers.
+- Exact line numbers may drift, but the cited symbols and behaviors currently exist at the referenced source locations in the external source clone.
+
+## Open Questions
+
+- Should the integration branch materialize `audit/impeccable/source` in every audit worktree so the resolver and relative source links work, or should `resolve-subslice.mjs` accept an override for an external source clone?
+- Should the `pin.mjs` `{{command_prefix}}` behavior be fixed in source, or only documented as a known `04d` issue for now?
