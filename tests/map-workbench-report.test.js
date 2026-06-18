@@ -401,6 +401,48 @@ test('Gate mode surfaces failed, unknown, unapproved exception, stale, and candi
   ]));
 });
 
+test('Gate mode surfaces required coverage rows that are not complete', () => {
+  const cwd = tempDir();
+  const config = prepareReportRun(cwd, {
+    motionMeasurement: { cssHovers: [], loops: [], sourceInspections: completeMotionInspections() },
+  });
+  fs.writeFileSync(path.join(config.runDir, '02-static-map', 'coverage.md'), [
+    '# Static Map Coverage',
+    '',
+    '| Area | Name | Required | Status | Evidence | Reason |',
+    '| --- | --- | --- | --- | --- | --- |',
+    '| region-launch-faster | Launch Faster | required | out_of_scope | fixture | Human-visible source banner blocks the crop |',
+    '| region-header | Header | info | missing | fixture | Optional header evidence is deferred |',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync(process.execPath, [BIN, 'map-report', config.runDir], {
+    cwd,
+    encoding: 'utf8',
+    timeout: CLI_TIMEOUT_MS,
+    env: process.env,
+  });
+
+  expect(result.status).toBe(0);
+  const html = fs.readFileSync(path.join(config.runDir, '04-map-report', 'index.html'), 'utf8');
+  expect(html).toContain('Human-visible source banner blocks the crop');
+  const snapshot = extractSnapshot(html);
+  expect(snapshot.gateFindings).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: 'static-map-coverage',
+      id: 'Launch Faster',
+      status: 'out_of_scope',
+      message: expect.stringContaining('Human-visible source banner blocks the crop'),
+    }),
+    expect.objectContaining({
+      source: 'static-map-coverage',
+      id: 'Header',
+      status: 'missing',
+      message: expect.stringContaining('Optional header evidence is deferred'),
+    }),
+  ]));
+});
+
 test('Gate mode ignores the Motion Scout no-candidates placeholder row', () => {
   const cwd = tempDir();
   const config = prepareReportRun(cwd, {
