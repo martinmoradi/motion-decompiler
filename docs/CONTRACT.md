@@ -334,8 +334,9 @@ yoinkit map-gate <run-dir> --approve-exception <exception-id> --reason "..." --s
 Approving an exception is not the same as approving the gate. `--approve-exception`
 records that specific exception approval and rewrites the gate decision record,
 but the gate remains failing until every required assertion and coverage blocker
-has passed, been marked out of scope, or been approved as an exception. Final
-gate approval still requires `--approve`.
+has passed or been waived by a canonical human-approved exception in
+`page-model.json`. A producer `out_of_scope` status does not clear a required
+blocker by itself. Final gate approval still requires `--approve`.
 When the exception id already exists in `page-model.json`, the command marks it
 approved. When it does not exist, the command creates it and requires enough
 context: `--reason`, `--scope <kind:id>`, and optional `--expires-after-stage`.
