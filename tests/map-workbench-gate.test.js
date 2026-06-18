@@ -1300,6 +1300,9 @@ test('yoinkit map-gate --approve-exception creates a canonical Page model except
   const gate = readJson(gateFile);
   expect(gate).toMatchObject({
     decision: 'exception-approved',
+    freshnessSummary: {
+      staleInputs: 1,
+    },
     humanDecision: {
       action: 'approve-exception',
       exceptionId: 'exception-hero-crop',
@@ -1307,6 +1310,13 @@ test('yoinkit map-gate --approve-exception creates a canonical Page model except
   });
   expect(gate.exceptionIds).toContain('exception-hero-crop');
   expect(gate.inputHashes['page-model.json']).toBe(sha256File(path.join(config.runDir, 'page-model.json')));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'page-model.json',
+      source: 'report-freshness',
+      status: 'stale',
+    }),
+  ]));
 });
 
 test('yoinkit map-gate --approve-exception records an optional expiry stage', () => {
