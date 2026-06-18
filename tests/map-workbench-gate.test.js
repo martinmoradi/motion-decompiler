@@ -930,6 +930,30 @@ test('yoinkit map-gate scopes coverage parser headers to each markdown table sec
   expect(gate.blockers).toEqual([]);
 });
 
+test('yoinkit map-gate keeps blank-name coverage blocker ids distinct', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  writeText(path.join(staticMapDir(config.runDir), 'coverage.md'), [
+    '# Static Map Coverage',
+    '',
+    '| Area | Name | Required | Status | Evidence | Reason |',
+    '| --- | --- | --- | --- | --- | --- |',
+    '| region-hero |  | required | missing | fixture | first blank-name row |',
+    '| region-hero |  | required | missing | fixture | second blank-name row |',
+    '',
+  ].join('\n'));
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:24:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  const ids = gate.blockers
+    .filter(blocker => blocker.source === 'static-map-coverage')
+    .map(blocker => blocker.id);
+  expect(ids).toEqual(['region-hero:row-1', 'region-hero:row-2']);
+});
+
 test('yoinkit map-gate --approve blocks uninspected required Motion Scout discovery sources', () => {
   const cwd = tempDir();
   const inspections = completeMotionInspections('desktop').map(row => (
