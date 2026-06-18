@@ -130,6 +130,24 @@ function writeTinyPng(file) {
   fs.writeFileSync(file, tinyPngBytes());
 }
 
+function writeFakeCaptureBrowser(cwd, logFile) {
+  const file = path.join(cwd, 'fake-capture-browser.js');
+  fs.writeFileSync(file, `#!/usr/bin/env bun
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logFile)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'screenshot') {
+  const outputFile = args[args.length - 1];
+  fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+  fs.writeFileSync(outputFile, Buffer.from('${tinyPngBytes().toString('base64')}', 'base64'));
+}
+`);
+  fs.chmodSync(file, 0o755);
+  return file;
+}
+
 function tinyPngBytes() {
   return Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lTO+8QAAAABJRU5ErkJggg==',
@@ -1321,6 +1339,48 @@ test('static-map batches crop screenshots once per viewport when the driver supp
     { viewportId: 'mobile', count: 2 },
   ]);
   expect(result.regions.every(region => region.viewports.desktop.crop.path && region.viewports.mobile.crop.path)).toBe(true);
+});
+
+test('capture-browser Static Map driver top-aligns each crop before viewport screenshotting', () => {
+  const cwd = tempDir();
+  const browserLog = path.join(cwd, 'browser-log.jsonl');
+  const browserBin = writeFakeCaptureBrowser(cwd, browserLog);
+  const driver = createCaptureBrowserStaticMapDriver({ browserBin, openDelayMs: 0, cropSettleMs: 0 });
+  const crops = [
+    { selector: 'section.hero', outputFile: path.join(cwd, 'hero.png') },
+    { selector: 'section.work', outputFile: path.join(cwd, 'work.png') },
+  ];
+
+  const results = driver.captureRegionCrops({
+    targetUrl: 'https://example.com/source',
+    viewport: { id: 'desktop', width: 1280, height: 800 },
+    crops,
+  });
+
+  const calls = fs.readFileSync(browserLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(calls.map(call => call[0])).toEqual([
+    'open',
+    'set',
+    'eval',
+    'screenshot',
+    'eval',
+    'screenshot',
+  ]);
+  expect(calls[0]).toEqual(['open', 'https://example.com/source']);
+  expect(calls[1]).toEqual(['set', 'viewport', '1280', '800']);
+  expect(calls[2][1]).toContain('section.hero');
+  expect(calls[3]).toEqual(['screenshot', crops[0].outputFile]);
+  expect(calls[4][1]).toContain('section.work');
+  expect(calls[5]).toEqual(['screenshot', crops[1].outputFile]);
+  expect(results).toEqual([
+    { method: 'agent-browser-viewport-screenshot', width: 1280, height: 800 },
+    { method: 'agent-browser-viewport-screenshot', width: 1280, height: 800 },
+  ]);
+  expect(calls).not.toContainEqual(['scrollintoview', 'section.hero']);
+  expect(calls).not.toContainEqual(['screenshot', 'section.hero', crops[0].outputFile]);
+  expect(calls).not.toContainEqual(['screenshot', 'section.work', crops[1].outputFile]);
+  expect(fs.existsSync(crops[0].outputFile)).toBe(true);
+  expect(fs.existsSync(crops[1].outputFile)).toBe(true);
 });
 
 const browserTest = commandExists('agent-browser') ? test : test.skip;
