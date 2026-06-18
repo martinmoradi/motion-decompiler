@@ -3880,12 +3880,24 @@ function mapReportCommand(argv) {
   console.log(result.artifacts.report);
 }
 
+const MAP_GATE_FLAGS = new Set([
+  '--approve',
+  '--reject',
+  '--approve-exception',
+  '--note',
+  '--reason',
+  '--scope',
+  '--expires-after-stage',
+  '--help',
+  '-h',
+]);
+
 function parseMapGateArgs(argv) {
   const flags = {};
   const positionals = [];
   function valueAfter(index, flag) {
     const value = argv[index + 1];
-    if (value === undefined || value.startsWith('--')) {
+    if (value === undefined || MAP_GATE_FLAGS.has(value)) {
       throw new Error(`map-gate ${flag} requires a value`);
     }
     return value;

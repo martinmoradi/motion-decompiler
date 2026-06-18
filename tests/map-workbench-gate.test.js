@@ -2133,6 +2133,38 @@ test('yoinkit map-gate reports a precise error for missing value flags', () => {
   expect(fs.existsSync(path.join(mapReportDir(config.runDir), 'gate.json'))).toBe(false);
 });
 
+test('yoinkit map-gate accepts audit text values that begin with dashes', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  const result = runGate(cwd, [config.runDir, '--approve', '--note', '--legacy banner, see ticket']);
+
+  expect(result.status).toBe(0);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.humanDecision.note).toBe('--legacy banner, see ticket');
+});
+
+test('yoinkit map-gate accepts exception reasons that begin with dashes', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+
+  const result = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-crop',
+    '--reason', '--source-owned banner accepted',
+    '--scope', 'region:region-hero',
+  ]);
+
+  expect(result.status).toBe(0);
+  const page = readJson(path.join(config.runDir, 'page-model.json'));
+  expect(page.exceptions).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'exception-hero-crop',
+      reason: '--source-owned banner accepted',
+    }),
+  ]));
+});
+
 test('yoinkit map-gate --approve requires Report v0 to exist', () => {
   const cwd = tempDir();
   const config = createRun(cwd);
