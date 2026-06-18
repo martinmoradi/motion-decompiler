@@ -1612,6 +1612,16 @@ test('yoinkit map-gate requires final approval after approving a scoped Region e
   const exceptionGate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
   expect(exceptionGate.decision).toBe('exception-approved');
 
+  // Recording the exception edited page-model.json, so Report v0 is now stale.
+  // map-gate must not silently refresh it: final approval is blocked until
+  // map-report regenerates the Report the human reviews.
+  const staleApproval = runGate(cwd, [config.runDir, '--approve', '--note', 'Tried to approve before regenerating Report v0']);
+  expect(staleApproval.status).toBe(1);
+  expect(staleApproval.stderr).toContain('Report v0 is stale; rerun map-report');
+  expect(staleApproval.stderr).toContain('page-model.json');
+
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:30:00.000Z') });
+
   const approvalResult = runGate(cwd, [config.runDir, '--approve', '--note', 'Report v0 approved after exception review']);
 
   expect(approvalResult.status).toBe(0);
@@ -1643,6 +1653,58 @@ test('yoinkit map-gate requires final approval after approving a scoped Region e
   expect(gate.blockers).toEqual([]);
 });
 
+test('yoinkit map-gate --approve-exception does not fake Report freshness for a later approval', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticAssertions: [{
+      id: 'static-map-region-hero-desktop-crop',
+      kind: 'region-crop',
+      required: true,
+      status: 'fail',
+      evidence: ['cookie banner covers the crop'],
+      failure: 'required hero crop is blocked by the source cookie banner',
+    }],
+  });
+  const reportFile = path.join(mapReportDir(config.runDir), 'index.html');
+  const reportMtimeBefore = fs.statSync(reportFile).mtimeMs;
+
+  const exceptionResult = runGate(cwd, [
+    config.runDir,
+    '--approve-exception', 'exception-hero-crop',
+    '--reason', 'Cookie banner is source-owned and accepted for Map v0.',
+    '--scope', 'region:region-hero',
+  ]);
+  expect(exceptionResult.status).toBe(0);
+
+  // The exception write must not touch the Report HTML (no silent mtime bump
+  // and no regeneration). map-gate is a recorder, not a stage runner.
+  expect(fs.statSync(reportFile).mtimeMs).toBe(reportMtimeBefore);
+
+  // So a later --approve is blocked: page-model.json changed after Report v0.
+  const staleApproval = runGate(cwd, [config.runDir, '--approve']);
+  expect(staleApproval.status).toBe(1);
+  expect(staleApproval.stderr).toContain('Report v0 is stale; rerun map-report');
+  expect(staleApproval.stderr).toContain('page-model.json');
+  const blockedGate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(blockedGate.decision).toBe('blocked');
+  expect(blockedGate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: 'page-model.json',
+      source: 'report-freshness',
+      status: 'stale',
+    }),
+  ]));
+
+  // After regenerating the Report, final approval can proceed.
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:30:00.000Z') });
+  const approvalResult = runGate(cwd, [config.runDir, '--approve', '--note', 'Report v0 approved after regeneration']);
+  expect(approvalResult.status).toBe(0);
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.decision).toBe('approved');
+  expect(gate.exceptionIds).toContain('exception-hero-crop');
+  expect(gate.blockers).toEqual([]);
+});
+
 test('yoinkit map-gate records all blocker ids waived by one Region exception', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd, {
@@ -1671,6 +1733,9 @@ test('yoinkit map-gate records all blocker ids waived by one Region exception', 
     '--scope', 'region:region-hero',
   ]);
   expect(exceptionResult.status).toBe(0);
+
+  // The exception write staled Report v0; regenerate before final approval.
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:30:00.000Z') });
 
   const approvalResult = runGate(cwd, [config.runDir, '--approve']);
 

@@ -132,7 +132,14 @@ required coverage, reasoned unknowns, and approved blocking exceptions:
 
 Approving an exception stores a canonical human-approved exception in
 `page-model.json` and records it in `gate.json`, but it is not final gate
-approval. Run `map-gate --approve` afterward when the Report is ready.
+approval. Because it edits `page-model.json`, the Report v0 is now stale;
+regenerate it before final approval so the human reviews the exception in place:
+
+```bash
+./bin/yoinkit map-report "$RUN"
+./bin/yoinkit map-gate "$RUN" --approve --note "Report v0 approved for Capture"
+```
+
 Markdown coverage statuses such as `approved` or `exception` do not waive a
 required item; only canonical `page-model.json` exceptions can do that.
 
