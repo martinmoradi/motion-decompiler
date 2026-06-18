@@ -64,60 +64,6 @@ later improve loops are out of scope for this implemented command surface.
 `);
 }
 
-function parseFlags(argv) {
-  const flags = {};
-  const positionals = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === '--viewport') {
-      flags.viewport = parseViewport(argv[++i]);
-    } else if (arg === '--slug') {
-      flags.slug = argv[++i];
-    } else if (arg === '--runs-dir') {
-      flags.runsDir = argv[++i];
-    } else if (arg === '--out') {
-      flags.out = argv[++i];
-    } else if (arg === '--max-hover-captures') {
-      flags.maxHoverCaptures = Number(argv[++i]);
-    } else if (arg === '--ready-timeout-ms') {
-      flags.readyTimeoutMs = Number(argv[++i]);
-    } else if (arg === '--ready-stable-ms') {
-      flags.readyStableMs = Number(argv[++i]);
-    } else if (arg === '--open-delay-ms') {
-      flags.openDelayMs = Number(argv[++i]);
-    } else if (arg === '--no-ready-wait') {
-      flags.noReadyWait = true;
-    } else if (arg === '--capture-strategy') {
-      flags.captureStrategy = argv[++i];
-    } else if (arg === '--fresh-captures') {
-      flags.captureStrategy = 'fresh';
-    } else if (arg === '--repair-cmd') {
-      flags.repairCmd = argv[++i];
-    } else if (arg === '--repair-max-retries') {
-      flags.repairMaxRetries = Number(argv[++i]);
-    } else if (arg === '--repair-budget') {
-      flags.repairBudget = Number(argv[++i]);
-    } else if (arg === '--repair-confidence-floor') {
-      flags.repairConfidenceFloor = Number(argv[++i]);
-    } else if (arg === '--repair-causes') {
-      flags.repairCauses = String(argv[++i] || '').split(',').map(s => s.trim()).filter(Boolean);
-    } else if (arg === '--repair-dump') {
-      flags.repairDump = true;
-    } else if (arg === '--no-open') {
-      flags.noOpen = true;
-    } else if (arg === '--keep-open') {
-      flags.keepOpen = true;
-    } else if (arg === '--help' || arg === '-h') {
-      flags.help = true;
-    } else if (arg.startsWith('--')) {
-      throw new Error(`Unknown option: ${arg}`);
-    } else {
-      positionals.push(arg);
-    }
-  }
-  return { flags, positionals };
-}
-
 function parseViewport(value) {
   if (!value) return DEFAULT_VIEWPORT;
   const match = String(value).match(/^(\d+)[x,](\d+)$/);
@@ -3954,129 +3900,13 @@ function mapCommand(argv) {
     console.log('yoinkit map <run-dir>');
     process.exit(help ? 0 : 1);
   }
-  const runDir = path.resolve(positionals[0]);
+  const runDir = positionals[0];
   const result = runPreGateMap(runDir, {
     reconDriver: reconDriverFromEnv(),
     staticMapDriver: staticMapDriverFromEnv(),
     motionScoutDriver: motionScoutDriverFromEnv(),
   });
   console.log(result.artifacts.report);
-}
-
-function captureCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length < 1 || positionals.length > 2) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  const runDir = path.resolve(positionals[0]);
-  ensureRunDir(runDir);
-  const { file, manifest } = loadManifest(runDir, positionals[1]);
-  const results = runCapture(runDir, manifest, file, flags);
-  console.log(`Saved ${timelineCount(results)} timeline(s) under ${path.join(runDir, 'timelines')}`);
-  console.log(`Capture results: ${results.length}`);
-}
-
-function planCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  const runDir = path.resolve(positionals[0]);
-  ensureRunDir(runDir);
-  const result = planFromMap(runDir, flags);
-  console.log(`Saved ${result.manifestFile}`);
-  console.log(`Saved ${path.join(runDir, 'capture-plan.md')}`);
-  console.log(`Proposed captures: ${result.manifest.captures.length}`);
-}
-
-function reportCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  const runDir = path.resolve(positionals[0]);
-  ensureRunDir(runDir);
-  buildReport(runDir);
-  console.log(`Saved ${path.join(runDir, 'report.md')}`);
-}
-
-function assembleCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  const runDir = path.resolve(positionals[0]);
-  ensureRunDir(runDir);
-  const spec = assembleSpec(runDir);
-  console.log(`Saved ${path.join(runDir, 'animations.json')}`);
-  console.log(`Saved ${path.join(runDir, 'animations.md')}`);
-  console.log(`Animations: ${spec.animations.length}; patterns: ${spec.patterns.length}; unspecced: ${spec.unspecced.length}`);
-}
-
-function runCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  const { file } = loadManifest(process.cwd(), positionals[0]);
-  const { runDir, map, results, spec } = runFromManifestFile(file, flags);
-  console.log(`Run: ${runDir}`);
-  console.log(`Map: ${(map.libs || []).join(', ') || 'no libraries'}; ${(map.hoverCandidates || []).length} hover candidates`);
-  console.log(`Timelines: ${timelineCount(results)}`);
-  console.log(`Capture results: ${results.length}`);
-  console.log(`Animations: ${spec.animations.length}`);
-  console.log(`Spec: ${path.join(runDir, 'animations.json')}`);
-  console.log(`Report: ${path.join(runDir, 'report.md')}`);
-}
-
-function scoutCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length !== 1) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  const { runDir, map, plan } = scoutUrl(positionals[0], flags);
-  console.log(`Run: ${runDir}`);
-  console.log(`Map: ${(map.libs || []).join(', ') || 'no libraries'}; ${(map.hoverCandidates || []).length} hover candidates`);
-  console.log(`Proposed captures: ${plan.manifest.captures.length}`);
-  console.log(`Plan: ${path.join(runDir, 'capture-plan.md')}`);
-  console.log(`Next: ./bin/yoinkit yoink ${quote(runDir)}`);
-}
-
-function isLikelyUrl(value) {
-  return /^https?:\/\//i.test(String(value || ''));
-}
-
-function yoinkCommand(argv) {
-  const { flags, positionals } = parseFlags(argv);
-  if (flags.help || positionals.length < 1 || positionals.length > 2) {
-    usage();
-    process.exit(flags.help ? 0 : 1);
-  }
-  let result;
-  if (positionals.length === 1 && isLikelyUrl(positionals[0])) {
-    result = yoinkUrl(positionals[0], flags);
-    console.log(`Run: ${result.runDir}`);
-    console.log(`Proposed captures: ${result.plan.manifest.captures.length}`);
-  } else if (positionals.length === 1 && fs.existsSync(path.resolve(positionals[0])) && fs.statSync(path.resolve(positionals[0])).isFile()) {
-    result = runFromManifestFile(path.resolve(positionals[0]), flags);
-    console.log(`Run: ${result.runDir}`);
-  } else {
-    const runDir = path.resolve(positionals[0]);
-    result = yoinkRunDir(runDir, positionals[1], flags);
-    console.log(`Run: ${result.runDir}`);
-    console.log(`Manifest: ${result.manifestFile}`);
-  }
-  console.log(`Timelines: ${timelineCount(result.results)}`);
-  console.log(`Capture results: ${result.results.length}`);
-  console.log(`Animations: ${result.spec.animations.length}`);
-  console.log(`Spec: ${path.join(result.runDir, 'animations.json')}`);
-  console.log(`Report: ${path.join(result.runDir, 'report.md')}`);
 }
 
 function main() {
