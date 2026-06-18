@@ -1026,10 +1026,11 @@ before returning.
 Report v0 must support three view modes:
 
 - **Source mode**: viewport-aligned Region screenshots in source order. The
-  screenshots must keep their viewport aspect ratio and must not be stretched to
-  fill tall Regions. Measured colors, typography, and assets are fallbacks when
-  crops are missing, not a page reconstruction engine. It answers whether the
-  visual evidence resembles the source.
+  screenshots must keep their viewport aspect ratio, must not be stretched to
+  fill tall Regions, and should be clipped to the Region height when the Region
+  is shorter than the viewport evidence. Measured colors, typography, and assets
+  are fallbacks when crops are missing, not a page reconstruction engine. It
+  answers whether the visual evidence resembles the source.
   Full-page stitched screenshots are not required in Report v0.
 - **Region mode**: artificial tints, inset non-layout-affecting borders, labels,
   hover outlines, and tooltips. It answers whether segmentation is correct.
