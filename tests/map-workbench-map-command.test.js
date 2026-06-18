@@ -88,6 +88,14 @@ function readyReconSnapshot() {
   };
 }
 
+function blockedReconSnapshot() {
+  return Object.assign({}, readyReconSnapshot(), {
+    title: 'Access challenge',
+    readiness: { status: 'blocked', readyState: 'complete', textLength: 120 },
+    blockers: [{ type: 'challenge', evidence: 'verify you are human' }],
+  });
+}
+
 function measuredCandidate() {
   return {
     selector: 'main > section.hero',
@@ -172,6 +180,30 @@ test('yoinkit map runs the pre-gate Map workbench sequence and stops before Map 
   expect(new Date(pageState.generatedAt).getTime()).toBeLessThanOrEqual(new Date(staticMap.generatedAt).getTime());
   expect(new Date(staticMap.generatedAt).getTime()).toBeLessThanOrEqual(new Date(motionScout.generatedAt).getTime());
   expect(new Date(motionScout.generatedAt).getTime()).toBeLessThanOrEqual(new Date(report.generatedAt).getTime());
+});
+
+test('yoinkit map stops at Recon when Recon reports a real blocker', () => {
+  const cwd = tempDir();
+  const runDir = createRun(cwd);
+  const reconFixture = path.join(cwd, 'fixtures', 'recon-blocked.json');
+  writeJson(reconFixture, { default: blockedReconSnapshot() });
+
+  const result = runCli(cwd, ['map', runDir], { YOINKIT_RECON_FIXTURE: reconFixture });
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('Recon blocked: challenge (verify you are human)');
+  expect(fs.existsSync(path.join(runDir, '01-recon', 'page-state.json'))).toBe(true);
+  expect(fs.existsSync(path.join(runDir, '02-static-map', 'measurements.json'))).toBe(false);
+  expect(fs.existsSync(path.join(runDir, '04-map-report', 'index.html'))).toBe(false);
+
+  const status = readJson(path.join(runDir, '01-recon', 'stage-status.json'));
+  expect(status).toMatchObject({
+    schemaVersion: 1,
+    stage: 'recon',
+    status: 'blocked',
+    error: 'Recon blocked: challenge (verify you are human)',
+    errorName: 'ReconBlockedError',
+  });
 });
 
 test('yoinkit map stops at the first failing stage and preserves completed artifacts', () => {
