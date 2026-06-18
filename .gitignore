@@ -7,3 +7,6 @@
 *.animation.json
 runs/
 /tmp/
+
+# Cloned source for audit (not ours)
+audit/impeccable/source/
