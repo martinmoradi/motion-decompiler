@@ -18,6 +18,15 @@ what the page actually does, in a real browser."
 
 All paths are under `source/cli/`.
 
+> **Deep dives (added after this first draft).** This report is the overview. Four
+> companion documents go to the floor on the parts a fresh agent would reason about
+> or copy, and they correct a few first-draft inaccuracies (flagged inline below):
+>
+> - [`01a-rule-trinity-and-dispatch.md`](01a-rule-trinity-and-dispatch.md): the pure-core + two-adapter trinity traced end to end, the generated-bundle mechanism, and the full **rule×engine matrix** (all 44 rules across 4 engines).
+> - [`01b-css-cascade-engine.md`](01b-css-cascade-engine.md): the hand-rolled CSS cascade algorithm by algorithm, its fidelity gaps, and the dead-code finding.
+> - [`01c-color-and-contrast-tiers.md`](01c-color-and-contrast-tiers.md): color science and the three-tier contrast escalation in full (in-page canvas sampling plus the screenshot render-twice-and-diff).
+> - [`01d-selector-and-footprint.md`](01d-selector-and-footprint.md): selector generation, text-rect measurement, and footprint scrubbing (drops into `pick()` / `on(sel)` / `scan()`).
+
 ---
 
 ## File map
@@ -158,7 +167,7 @@ Verbatim shape (the side-tab rule):
 
 Optional fields seen across the catalog: `severity` (`'warning'` default, plus
 `'advisory'`), and `gated` (`'gpt'` | `'gemini'`) for provider-specific tells
-that are off by default. There are ~40 rules. The `id` is the join key that
+that are off by default. There are exactly **44 rules** (26 `slop`, 18 `quality`; 4 provider-gated, 8 `advisory`); the full rule-by-engine matrix is in [`01a`](01a-rule-trinity-and-dispatch.md). The `id` is the join key that
 threads through every layer.
 
 ### A finding (emitted result)
@@ -233,6 +242,15 @@ This is the most directly transferable idea for YoinkIt. Impeccable runs the
    `detect-antipatterns-browser.js`, run by Puppeteer *and* the extension *and*
    the live overlay) — real `getComputedStyle` + `getBoundingClientRect`.
 3. **Regex over raw source** (`detectText`) — no DOM at all, pattern matching.
+
+> **Naming note (post-draft):** the second runtime is labeled "jsdom/static" both
+> here and in the code's own comments, but **jsdom was removed** (it is not a
+> dependency and is imported nowhere in `cli/engine`). Those adapters now run
+> against the hand-rolled `StaticDocument` façade from
+> [`01b`](01b-css-cascade-engine.md), not jsdom. Read "jsdom adapter" as "no-layout
+> Node adapter." The modern-CSS gotchas listed below are real history; the cascade
+> in [`01b`](01b-css-cascade-engine.md) is how most are now fixed at the source
+> rather than worked around at the rule.
 
 ### The trinity: pure core + two adapters
 
@@ -336,6 +354,10 @@ field guide for YoinkIt:
    style and hands resolved width/color to `checkElementBorders` as `overrides`,
    which fills only the sides jsdom left empty
    ([`checks.mjs:1729-1736`](../source/cli/engine/rules/checks.mjs)).
+   **Correction (see [`01b`](01b-css-cascade-engine.md) §7): this pre-pass is now
+   vestigial dead code.** The static driver passes `overrides: null` and the
+   css-tree cascade resolves border `var()` itself; `buildBorderOverrideMap` is
+   never called anywhere in the source tree.
 5. **jsdom UA `:link{color:blue}` false positives.** Real Chrome wraps `:link`
    in zero-specificity `:where()`; jsdom doesn't, so `a{color:inherit}` *loses*
    off-browser. `checkElementColors` detects literal link-blue
@@ -475,7 +497,9 @@ The mechanism, concretely:
   ([`:709-714`](../source/cli/engine/engines/static-html/css-cascade.mjs)), and a
   separate `unwrapCssAtLayer` ([`:187-219`](../source/cli/engine/engines/static-html/css-cascade.mjs))
   brace-balances and flattens `@layer { … }` wrappers — modern (Tailwind v4)
-  CSS that jsdom mishandles.
+  CSS that jsdom mishandles. **Correction:** only the `collectStaticCssRules` AST
+  walk is live; the standalone `unwrapCssAtLayer` string flattener is vestigial
+  (never called tree-wide). See [`01b`](01b-css-cascade-engine.md) §7.
 - **Local-only stylesheet inlining** — `collectStaticCssText`
   ([`:862-885`](../source/cli/engine/engines/static-html/css-cascade.mjs)) reads
   `<link rel=stylesheet>` hrefs **from disk**, explicitly skipping
