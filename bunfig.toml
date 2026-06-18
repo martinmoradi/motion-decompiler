@@ -1,0 +1,5 @@
+[test]
+# Scope test discovery to our own suite. The audit clone at
+# audit/impeccable/source/ (gitignored) ships its own tests that would
+# otherwise be picked up by a bare `bun test` and fail in this repo's context.
+root = "tests"
