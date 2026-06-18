@@ -3908,6 +3908,9 @@ function parseMapGateArgs(argv) {
     } else if (arg === '--scope') {
       flags.scope = valueAfter(i, arg);
       i += 1;
+    } else if (arg === '--expires-after-stage') {
+      flags.expiresAfterStage = valueAfter(i, arg);
+      i += 1;
     } else if (arg === '--help' || arg === '-h') {
       flags.help = true;
     } else if (arg.startsWith('--')) {
@@ -3923,7 +3926,7 @@ function mapGateCommand(argv) {
   const { flags, positionals } = parseMapGateArgs(argv);
   const decisionCount = (flags.approve ? 1 : 0) + (flags.reject ? 1 : 0) + (flags.approveException ? 1 : 0);
   if (flags.help || positionals.length !== 1 || decisionCount !== 1) {
-    console.log('yoinkit map-gate <run-dir> (--approve [--note "..."] | --reject --reason "..." | --approve-exception <exception-id> --reason "..." --scope <kind:id>)');
+    console.log('yoinkit map-gate <run-dir> (--approve [--note "..."] | --reject --reason "..." | --approve-exception <exception-id> --reason "..." --scope <kind:id> [--expires-after-stage STAGE])');
     process.exit(flags.help ? 0 : 1);
   }
   if (flags.reject && !(typeof flags.reason === 'string' && flags.reason.trim())) {
@@ -3942,6 +3945,7 @@ function mapGateCommand(argv) {
     reason: flags.reason,
     exceptionId: flags.approveException,
     scope: flags.scope,
+    expiresAfterStage: flags.expiresAfterStage,
   });
   console.log(gate.artifacts.gate);
 }
