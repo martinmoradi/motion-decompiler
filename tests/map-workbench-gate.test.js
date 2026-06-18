@@ -1045,7 +1045,7 @@ for (const status of ['pass', 'passed']) {
       expect.objectContaining({
         id: 'css-keyframes:desktop',
         source: 'motion-scout-discovery',
-        status: 'missing',
+        status,
       }),
     ]));
   });
@@ -1080,7 +1080,7 @@ test('yoinkit map-gate --approve does not let producer out-of-scope waive a requ
     expect.objectContaining({
       id: 'css-keyframes:desktop',
       source: 'motion-scout-discovery',
-      status: 'missing',
+      status: 'out_of_scope',
       message: 'Producer marked this source out of scope without a canonical exception.',
     }),
   ]));
