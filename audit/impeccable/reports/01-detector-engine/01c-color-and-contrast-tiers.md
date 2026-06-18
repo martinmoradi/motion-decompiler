@@ -7,11 +7,11 @@ internalizing: **contrast is resolved by the cheapest method that can be trusted
 and escalates only when the cheap method admits it cannot see**. Three tiers, with
 an explicit handoff between them.
 
-Files: [`shared/color.mjs`](../source/cli/engine/shared/color.mjs),
-[`rules/checks.mjs`](../source/cli/engine/rules/checks.mjs),
-[`browser/injected/index.mjs`](../source/cli/engine/browser/injected/index.mjs),
-[`engines/visual/screenshot-contrast.mjs`](../source/cli/engine/engines/visual/screenshot-contrast.mjs),
-[`engines/browser/detect-url.mjs`](../source/cli/engine/engines/browser/detect-url.mjs).
+Files: [`shared/color.mjs`](../../source/cli/engine/shared/color.mjs),
+[`rules/checks.mjs`](../../source/cli/engine/rules/checks.mjs),
+[`browser/injected/index.mjs`](../../source/cli/engine/browser/injected/index.mjs),
+[`engines/visual/screenshot-contrast.mjs`](../../source/cli/engine/engines/visual/screenshot-contrast.mjs),
+[`engines/browser/detect-url.mjs`](../../source/cli/engine/engines/browser/detect-url.mjs).
 
 ---
 
@@ -47,7 +47,7 @@ between under-capturing without telling anyone and over-capturing visibly.
 (`0.2126 R + 0.7152 G + 0.0722 B`), and `contrastRatio` is
 `(max + 0.05) / (min + 0.05)`. Plain, correct, shared by every tier (Tier 3
 re-implements the identical math inside the page so it can run in `page.evaluate`,
-[`screenshot-contrast.mjs:42-53`](../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
+[`screenshot-contrast.mjs:42-53`](../../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
 
 ### 1.3 `oklchToRgb` — the conversion jsdom never had (checks.mjs:925-946)
 
@@ -89,11 +89,11 @@ strings. Three functions turn those into `{r,g,b,a}`:
   does not resolve.
 - **`parseAnyColor(s)`** parses rgb/rgba/hex(3,4,6,8)/oklch. Its OKLCH regex tolerates
   Tailwind's minifier squishing the space after `%` (`"21.5%.02 50"`,
-  [checks.mjs:981](../source/cli/engine/rules/checks.mjs)).
+  [checks.mjs:981](../../source/cli/engine/rules/checks.mjs)).
 - **`parseColorResolved(str, map)`** chains the two: resolve refs, then parse.
 
 The design-system extractor adds `hslToRgb` for `hsl()` palette tokens
-([`design-system.mjs:203`](../source/cli/engine/design-system.mjs)). Together these
+([`design-system.mjs:203`](../../source/cli/engine/design-system.mjs)). Together these
 mean the detector can read a color literal in essentially any form a 2026 stylesheet
 emits.
 
@@ -101,7 +101,7 @@ emits.
 
 ## 2. Tier 1 — math (free, runs everywhere)
 
-`checkColors` ([checks.mjs:65-158](../source/cli/engine/rules/checks.mjs)) is the
+`checkColors` ([checks.mjs:65-158](../../source/cli/engine/rules/checks.mjs)) is the
 pure decision. Given a text color and an effective background (or gradient stops),
 it computes the WCAG ratio and compares to a threshold:
 
@@ -115,18 +115,18 @@ The non-obvious parts are all false-positive defenses:
 
 - **Gradient backgrounds use the worst stop.** If the effective background is a
   gradient, the ratio is computed against every stop and the lowest wins
-  ([checks.mjs:94-98](../source/cli/engine/rules/checks.mjs)). `gray-on-color` only
+  ([checks.mjs:94-98](../../source/cli/engine/rules/checks.mjs)). `gray-on-color` only
   fires if *every* stop is chromatic.
 - **Styled-button exception.** `SAFE_TAGS` normally suppresses contrast noise on
   inline `<a>`/`<button>`, but if such an element has its **own opaque background**
   (`bgColor.a > 0.5`) and direct text, it is a real button and contrast on its own
-  surface is checked ([checks.mjs:74-77](../source/cli/engine/rules/checks.mjs)).
+  surface is checked ([checks.mjs:74-77](../../source/cli/engine/rules/checks.mjs)).
 - **Alpha-fallback false-positive skip.** In the static path, if the text color has
   `alpha < 1` and no opaque ancestor background could be resolved, the finding is
-  suppressed ([checks.mjs:112](../source/cli/engine/rules/checks.mjs)). This is the
+  suppressed ([checks.mjs:112](../../source/cli/engine/rules/checks.mjs)). This is the
   `text-paper/60 on bg-ink` Tailwind pattern that the no-`var()` path mismeasures.
   The browser path does not need the skip (it resolves the real ancestor).
-- **Emoji-only text is skipped** (`isEmojiOnlyText`, [checks.mjs:59](../source/cli/engine/rules/checks.mjs))
+- **Emoji-only text is skipped** (`isEmojiOnlyText`, [checks.mjs:59](../../source/cli/engine/rules/checks.mjs))
   because emoji render as multicolor glyphs regardless of `color`.
 
 Tier 1 is the only contrast tier the static path has, and it is what the browser
@@ -144,12 +144,12 @@ overview under-described; it is a substantial pixel-sampling engine.
 
 ### 3.1 Candidate selection — what even needs Tier 2
 
-`collectVisualContrastReasons` ([injected/index.mjs:600-653](../source/cli/engine/browser/injected/index.mjs))
+`collectVisualContrastReasons` ([injected/index.mjs:600-653](../../source/cli/engine/browser/injected/index.mjs))
 walks an element and its ancestors and tags *why* its background is hard to read:
 `background-clip text`, `text shadow`, `image background`, `gradient background`,
 `opacity stack`, `blend mode`, `filter`, `backdrop filter`, plus an
 `img/picture/video/canvas/svg underlay` detected via `elementsFromPoint` under the
-text. `collectVisualContrastCandidates` ([:655](../source/cli/engine/browser/injected/index.mjs))
+text. `collectVisualContrastCandidates` ([:655](../../source/cli/engine/browser/injected/index.mjs))
 keeps the elements that have direct text, are rendered, pass the styled-button
 gate, and have at least one reason. Each candidate carries its generated selector,
 text-color, threshold, clip rect, and the reasons.
@@ -158,24 +158,24 @@ text-color, threshold, clip rect, and the reasons.
 
 The pixel sampling, bottom up:
 
-- **`blendRgba(fg, bg)`** ([:723](../source/cli/engine/browser/injected/index.mjs))
+- **`blendRgba(fg, bg)`** ([:723](../../source/cli/engine/browser/injected/index.mjs))
   alpha-composites a translucent color over a backdrop.
-- **`sampleDrawablePixel(drawable, sourcePoint)`** ([:900](../source/cli/engine/browser/injected/index.mjs))
+- **`sampleDrawablePixel(drawable, sourcePoint)`** ([:900](../../source/cli/engine/browser/injected/index.mjs))
   draws an image/canvas/video into an offscreen canvas (capped at 640px on the long
   side), reads one pixel, and **caches the raster in a `WeakMap`** so repeated
   samples of the same image are cheap. It detects cross-origin taint and returns
   `{status:'unresolved', reason:'tainted image'}` rather than throwing.
-- **`resolvePaintedImageRect` / `resolveObjectImageRect`** ([:784,:825](../source/cli/engine/browser/injected/index.mjs))
+- **`resolvePaintedImageRect` / `resolveObjectImageRect`** ([:784,:825](../../source/cli/engine/browser/injected/index.mjs))
   do real CSS geometry: they resolve `background-size` (`cover`/`contain`/explicit)
   and `background-position`, and `object-fit`/`object-position`, to map a viewport
   point to the correct source pixel of the image. This is genuinely careful: it
   handles the same painted-rect math a browser does so the sampled pixel is the one
   actually under the glyph.
-- **`sampleCssBackground`** ([:956](../source/cli/engine/browser/injected/index.mjs))
+- **`sampleCssBackground`** ([:956](../../source/cli/engine/browser/injected/index.mjs))
   resolves a node's own background: gradient → analytic worst-contrast stop
   (`pickWorstContrastColor`), url → canvas-sample the image at the mapped point,
   solid → the rgb.
-- **`sampleVisualBackgroundAtPoint(el, point, textColor, depth)`** ([:1026](../source/cli/engine/browser/injected/index.mjs))
+- **`sampleVisualBackgroundAtPoint(el, point, textColor, depth)`** ([:1026](../../source/cli/engine/browser/injected/index.mjs))
   is the orchestrator: it walks the `elementsFromPoint` stack from the text element
   down, samples each layer, and **recursively blends translucent layers over what
   is beneath them** (depth-capped at 8). It returns the composited background color
@@ -184,7 +184,7 @@ The pixel sampling, bottom up:
 ### 3.3 The verdict — `analyzeVisualContrastCandidate` (injected/index.mjs:1087)
 
 It samples multiple points across the text rect (`textSamplePoints`, an inset grid,
-[:1008](../source/cli/engine/browser/injected/index.mjs)), computes the contrast at
+[:1008](../../source/cli/engine/browser/injected/index.mjs)), computes the contrast at
 each, sorts, and reports the **p10 ratio** (the 10th-percentile worst case, robust
 to a few odd pixels) plus the median. Two gates make it honest:
 
@@ -193,7 +193,7 @@ to a few odd pixels) plus the median. Two gates make it honest:
 - **It refuses the cases it cannot trust.** If any reason is `background-clip text`,
   `blend mode`, `filter`, `backdrop filter`, `opacity stack`, or `text shadow`, it
   returns `{status:'unresolved', reason:'<reason> needs screenshot pixels'}`
-  ([:1097-1107](../source/cli/engine/browser/injected/index.mjs)). Canvas sampling
+  ([:1097-1107](../../source/cli/engine/browser/injected/index.mjs)). Canvas sampling
   reads the *input* pixels, not the *composited* output, so for those effects the
   sampled background is a lie. Tier 2 says so explicitly and hands off to Tier 3.
 
@@ -204,14 +204,14 @@ Resolved results carry `confidence: 'high'` when a `canvas-*` method was used,
 
 Candidates whose text is currently outside the viewport return
 `reason: 'text outside viewport'`. `scheduleLazyVisualContrast`
-([injected/index.mjs:1683](../source/cli/engine/browser/injected/index.mjs)) parks
+([injected/index.mjs:1683](../../source/cli/engine/browser/injected/index.mjs)) parks
 those on an `IntersectionObserver`; when the user scrolls one into view it resolves
 it, decorates the overlay, and posts the updated findings. A `scanGeneration`
 counter invalidates in-flight lazy work when a re-scan happens. So Tier 2 keeps
 resolving as the page is explored, not only at scan time. For the offscreen-from-
 the-start case under Puppeteer, the driver can opt into `scrollOffscreen`, which
 scrolls each candidate into view, samples, and restores scroll
-([:1173-1203](../source/cli/engine/browser/injected/index.mjs)).
+([:1173-1203](../../source/cli/engine/browser/injected/index.mjs)).
 
 ---
 
@@ -220,19 +220,19 @@ scrolls each candidate into view, samples, and restores scroll
 For the cases Tier 2 refused, the URL driver escalates to the one technique that
 sees the truly composited result: **screenshot, make the text transparent,
 screenshot again, diff the two images to isolate the exact glyph pixels.**
-[`screenshot-contrast.mjs:108-183`](../source/cli/engine/engines/visual/screenshot-contrast.mjs):
+[`screenshot-contrast.mjs:108-183`](../../source/cli/engine/engines/visual/screenshot-contrast.mjs):
 
 1. `sanitizeScreenshotClip` clamps the clip to the candidate's rect, **capping
-   height at 320px** so the diff stays cheap ([:9-12](../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
+   height at 320px** so the diff stays cheap ([:9-12](../../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
 2. Screenshot the clip (`captureBeyondViewport: true`).
 3. Inject a style that makes **only the target text** transparent:
    `color: transparent; -webkit-text-fill-color: transparent; text-shadow: none`,
    and if the reason was `background-clip text`, also `background-image: none`
-   ([:130-139](../source/cli/engine/engines/visual/screenshot-contrast.mjs)). The
+   ([:130-139](../../source/cli/engine/engines/visual/screenshot-contrast.mjs)). The
    target is marked with a one-shot `data-impeccable-visual-contrast-target`
    attribute, then cleaned up in a `finally`.
 4. Screenshot again.
-5. Diff in a canvas inside `page.evaluate` ([:65-84](../source/cli/engine/engines/visual/screenshot-contrast.mjs)):
+5. Diff in a canvas inside `page.evaluate` ([:65-84](../../source/cli/engine/engines/visual/screenshot-contrast.mjs)):
 
 ```js
 for (let i = 0; i < beforePixels.length; i += 4) {
@@ -249,7 +249,7 @@ The pixels that changed between the two shots are exactly the glyph pixels. Thei
 "before" color is the foreground; the "after" color (now showing through) is the
 true composited background. The verdict is the **p10 ratio** again, gated on
 `glyphPixels >= 8` and `ratios.length >= 8` so a couple of antialiased edge pixels
-cannot trigger it ([:86-94,:174](../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
+cannot trigger it ([:86-94,:174](../../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
 If `p10 >= threshold` it returns null (passes). `preferRenderedForeground` decides
 whether to trust the declared text color or read it from the before-pixels (used
 when opacity/blend made the declared color unreliable).
@@ -259,7 +259,7 @@ when opacity/blend made the declared color unreliable).
 ## 5. The escalation, wired
 
 The orchestration lives in `runVisualContrastFallback`
-([`detect-url.mjs:29-100`](../source/cli/engine/engines/browser/detect-url.mjs)) and
+([`detect-url.mjs:29-100`](../../source/cli/engine/engines/browser/detect-url.mjs)) and
 is a clean handoff:
 
 ```mermaid
@@ -279,7 +279,7 @@ The driver runs Tier 2 first (`impeccableAnalyzeVisualContrast`), records which
 selectors Tier 2 resolved (`pass` or `fail`), and then runs Tier 3
 (`captureVisualContrastCandidate`) **only** for candidates Tier 2 left unresolved
 and that are not already flagged low-contrast
-([detect-url.mjs:62-98](../source/cli/engine/engines/browser/detect-url.mjs)). The
+([detect-url.mjs:62-98](../../source/cli/engine/engines/browser/detect-url.mjs)). The
 two pixel paths are disjoint by design: canvas (Tier 2) reads input pixels and
 cannot see `background-clip:text`/filters/blend; screenshots (Tier 3) see the
 composited output but cost a render. Each covers what the other cannot.

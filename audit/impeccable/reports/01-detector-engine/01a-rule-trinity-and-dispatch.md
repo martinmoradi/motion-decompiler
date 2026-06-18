@@ -15,15 +15,15 @@ All `file:line` references are into `../source/cli/engine/` unless noted.
 
 | Engine | Driver file | Reads from | Has layout? | Resolves modern CSS? |
 |---|---|---|---|---|
-| `regex` | [`engines/regex/detect-text.mjs`](../source/cli/engine/engines/regex/detect-text.mjs) | raw source text, line by line | no | no — pattern match only |
-| `static-html` | [`engines/static-html/detect-html.mjs`](../source/cli/engine/engines/static-html/detect-html.mjs) + [`css-cascade.mjs`](../source/cli/engine/engines/static-html/css-cascade.mjs) | a hand-rolled computed-style object | no (rects are 0) | yes — own cascade resolves `var()`, OKLCH, shorthands, `@layer` |
-| `browser` | [`engines/browser/detect-url.mjs`](../source/cli/engine/engines/browser/detect-url.mjs) → injected bundle | real `getComputedStyle` + `getBoundingClientRect` | yes | yes — it is Chrome |
-| `visual` | [`engines/visual/screenshot-contrast.mjs`](../source/cli/engine/engines/visual/screenshot-contrast.mjs) | screenshot pixels | yes | yes (pixels) |
+| `regex` | [`engines/regex/detect-text.mjs`](../../source/cli/engine/engines/regex/detect-text.mjs) | raw source text, line by line | no | no — pattern match only |
+| `static-html` | [`engines/static-html/detect-html.mjs`](../../source/cli/engine/engines/static-html/detect-html.mjs) + [`css-cascade.mjs`](../../source/cli/engine/engines/static-html/css-cascade.mjs) | a hand-rolled computed-style object | no (rects are 0) | yes — own cascade resolves `var()`, OKLCH, shorthands, `@layer` |
+| `browser` | [`engines/browser/detect-url.mjs`](../../source/cli/engine/engines/browser/detect-url.mjs) → injected bundle | real `getComputedStyle` + `getBoundingClientRect` | yes | yes — it is Chrome |
+| `visual` | [`engines/visual/screenshot-contrast.mjs`](../../source/cli/engine/engines/visual/screenshot-contrast.mjs) | screenshot pixels | yes | yes (pixels) |
 
 The headline correction to the overview: **jsdom is gone**. It is not in
 `package.json` and is imported nowhere in `cli/engine`. The functions named
 `checkElementXxx(el, style, tag, window)` and the comments that say "jsdom" are a
-fossil of the era before [`css-cascade.mjs`](../source/cli/engine/engines/static-html/css-cascade.mjs)
+fossil of the era before [`css-cascade.mjs`](../../source/cli/engine/engines/static-html/css-cascade.mjs)
 existed. Today those "jsdom adapters" run against the `StaticDocument` façade the
 cascade builds (see [`01b-css-cascade-engine.md`](01b-css-cascade-engine.md)). When
 this document says "the static adapter," read it as "the no-layout Node adapter,"
@@ -39,7 +39,7 @@ engines, and three of them share one decision.
 
 ### The shared decision: `checkBorders` (pure, no DOM)
 
-[`rules/checks.mjs:26-51`](../source/cli/engine/rules/checks.mjs). Takes plain
+[`rules/checks.mjs:26-51`](../../source/cli/engine/rules/checks.mjs). Takes plain
 values, returns `[{id, snippet}]`:
 
 ```js
@@ -69,7 +69,7 @@ touches a DOM, a stylesheet, or a browser. It is unit-testable with literals.
 
 ### Adapter A — browser: `checkElementBordersDOM(el)`
 
-[`checks.mjs:755-768`](../source/cli/engine/rules/checks.mjs). Acquires
+[`checks.mjs:755-768`](../../source/cli/engine/rules/checks.mjs). Acquires
 measurements from the live DOM and hands them to the pure core:
 
 ```js
@@ -86,7 +86,7 @@ already `rgb(...)`, so `parseFloat` and the raw string just work.
 
 ### Adapter B — static: `checkElementBorders(tag, style, overrides, resolvedRadius)`
 
-[`checks.mjs:1718-1746`](../source/cli/engine/rules/checks.mjs). Same destination,
+[`checks.mjs:1718-1746`](../../source/cli/engine/rules/checks.mjs). Same destination,
 different acquisition:
 
 ```js
@@ -98,11 +98,11 @@ return checkBorders(tag, widths, colors, radius);
 ```
 
 No `rect` gate (there is no layout). The radius is **pre-resolved** by the caller
-via `resolveBorderRadiusPx` ([`checks.mjs:745`](../source/cli/engine/rules/checks.mjs))
+via `resolveBorderRadiusPx` ([`checks.mjs:745`](../../source/cli/engine/rules/checks.mjs))
 because the cascade's computed `borderRadius` can be a percentage or shorthand the
 pure core would mis-`parseFloat`. The `overrides` parameter is the old jsdom
 border-`var()`-recovery hook; the static driver passes `null`
-([`detect-html.mjs:92`](../source/cli/engine/engines/static-html/detect-html.mjs))
+([`detect-html.mjs:92`](../../source/cli/engine/engines/static-html/detect-html.mjs))
 because the cascade resolves `var()` itself now. That dead path is documented in
 [`01b`](01b-css-cascade-engine.md).
 
@@ -110,7 +110,7 @@ because the cascade resolves `var()` itself now. That dead path is documented in
 
 The regex engine has no computed style at all, so it cannot reuse `checkBorders`.
 It ships its **own** family of `side-tab` matchers
-([`detect-text.mjs:60-78`](../source/cli/engine/engines/regex/detect-text.mjs)),
+([`detect-text.mjs:60-78`](../../source/cli/engine/engines/regex/detect-text.mjs)),
 one per syntactic surface: Tailwind `border-l-4`, CSS `border-left: 4px solid`,
 `border-left-width`, logical `border-inline-start`, and JS `borderLeft="4px solid"`.
 Each carries its own thresholds (`>=4` plain, `>=2` if rounded), its own
@@ -172,13 +172,13 @@ in one IIFE guarded by `if (typeof window === 'undefined') return;`. So the
 `checkElementBordersDOM` that runs inside Chrome **is the exact source function**
 the Node tests import. The two cannot diverge because there is only one source;
 the bundle is a build artifact. The CLI's `detectUrl` reads this file off disk and
-`page.evaluate`s it ([`detect-url.mjs:127-203`](../source/cli/engine/engines/browser/detect-url.mjs)).
+`page.evaluate`s it ([`detect-url.mjs:127-203`](../../source/cli/engine/engines/browser/detect-url.mjs)).
 
 The single runtime fork is one line:
 `const DETECTOR_IS_BROWSER = typeof window !== 'undefined'`
-([`checks.mjs:22`](../source/cli/engine/rules/checks.mjs)). Shared helpers branch
+([`checks.mjs:22`](../../source/cli/engine/rules/checks.mjs)). Shared helpers branch
 on it internally rather than forking. Example, `resolveBackground`
-([`checks.mjs:640`](../source/cli/engine/rules/checks.mjs)):
+([`checks.mjs:640`](../../source/cli/engine/rules/checks.mjs)):
 
 ```js
 const style = DETECTOR_IS_BROWSER ? getComputedStyle(current) : win.getComputedStyle(current);
@@ -199,10 +199,10 @@ version of this; the build-time concat is the next step, not a rewrite.
 
 This is the part the overview did not have. It is derived directly from the four
 loops:
-- regex: `REGEX_MATCHERS` + `REGEX_ANALYZERS` ([`detect-text.mjs:59,161`](../source/cli/engine/engines/regex/detect-text.mjs))
-- static: `STATIC_ELEMENT_RULES` + the page block in `detectHtml` ([`detect-html.mjs:91,192`](../source/cli/engine/engines/static-html/detect-html.mjs))
-- browser: `collectBrowserFindings` ([`injected/index.mjs:1455`](../source/cli/engine/browser/injected/index.mjs))
-- visual: `captureVisualContrastCandidate` ([`screenshot-contrast.mjs:108`](../source/cli/engine/engines/visual/screenshot-contrast.mjs))
+- regex: `REGEX_MATCHERS` + `REGEX_ANALYZERS` ([`detect-text.mjs:59,161`](../../source/cli/engine/engines/regex/detect-text.mjs))
+- static: `STATIC_ELEMENT_RULES` + the page block in `detectHtml` ([`detect-html.mjs:91,192`](../../source/cli/engine/engines/static-html/detect-html.mjs))
+- browser: `collectBrowserFindings` ([`injected/index.mjs:1455`](../../source/cli/engine/browser/injected/index.mjs))
+- visual: `captureVisualContrastCandidate` ([`screenshot-contrast.mjs:108`](../../source/cli/engine/engines/visual/screenshot-contrast.mjs))
 
 Legend: `✓` runs · `–` not wired · `△` code path exists but is effectively inert
 in that runtime (the gate it needs is unavailable).
@@ -257,15 +257,15 @@ in that runtime (the gate it needs is unavailable).
 Footnotes (the asymmetries are the interesting part):
 
 1. regex `overused-font` matches `font-family:` declarations and Google Fonts URLs; it has no usage-share notion.
-2. browser `overused-font` is **share-weighted**: a font must be the computed primary on ≥15% of text elements, and the brand-font allowlist (`isBrandFontOnOwnDomain`) suppresses it on the brand's own domain ([`checks.mjs:1934-1943`](../source/cli/engine/rules/checks.mjs)). The static and regex tiers cannot do share weighting and just flag presence.
+2. browser `overused-font` is **share-weighted**: a font must be the computed primary on ≥15% of text elements, and the brand-font allowlist (`isBrandFontOnOwnDomain`) suppresses it on the brand's own domain ([`checks.mjs:1934-1943`](../../source/cli/engine/rules/checks.mjs)). The static and regex tiers cannot do share weighting and just flag presence.
 3. static `ai-color-palette` comes from `checkColors` (text hue 260–310 on a heading) plus `checkHtmlPatterns` (purple hex literals).
-4. browser additionally runs `checkElementAIPaletteDOM` ([`checks.mjs:1164`](../source/cli/engine/rules/checks.mjs)): purple/violet **and cyan** gradient *backgrounds*, plus neon text on a dark bg. Those need a resolved gradient and a luminance read, so they are browser-only.
-5. static `icon-tile-stack` passes `headingTop: 0` and `siblingBottom: 0` ([`checks.mjs:1825`](../source/cli/engine/rules/checks.mjs)) so the pure core *skips the vertical-stacking gate* (it treats 0 as "unknown, do not gate"). The browser path supplies real tops/bottoms.
-6. static `oversized-h1` cannot measure viewport share, so it fires on font-size + character count alone; the browser path adds the "dominates ≥28vh or ≥25% of viewport area" gate ([`checks.mjs:2235-2247`](../source/cli/engine/rules/checks.mjs)).
+4. browser additionally runs `checkElementAIPaletteDOM` ([`checks.mjs:1164`](../../source/cli/engine/rules/checks.mjs)): purple/violet **and cyan** gradient *backgrounds*, plus neon text on a dark bg. Those need a resolved gradient and a luminance read, so they are browser-only.
+5. static `icon-tile-stack` passes `headingTop: 0` and `siblingBottom: 0` ([`checks.mjs:1825`](../../source/cli/engine/rules/checks.mjs)) so the pure core *skips the vertical-stacking gate* (it treats 0 as "unknown, do not gate"). The browser path supplies real tops/bottoms.
+6. static `oversized-h1` cannot measure viewport share, so it fires on font-size + character count alone; the browser path adds the "dominates ≥28vh or ≥25% of viewport area" gate ([`checks.mjs:2235-2247`](../../source/cli/engine/rules/checks.mjs)).
 7. `low-contrast` is **math** in static and browser (`checkColors` WCAG ratio), then the browser escalates unresolved cases to canvas (Tier 2) and the URL driver escalates further to screenshot pixel-diff (Tier 3, the `visual` column). See [`01c`](01c-color-and-contrast-tiers.md).
-8. these need element rects. The static driver calls `checkElementQuality`/`checkElementClippedOverflow` with `rect: null` ([`checks.mjs:1715`](../source/cli/engine/rules/checks.mjs)), so the rect-gated branches inside never fire. The code runs; the findings cannot.
-9. `text-overflow` needs `scrollWidth`/`clientWidth`, which only a real layout engine has; it is wired only in the browser loop ([`injected/index.mjs:1490`](../source/cli/engine/browser/injected/index.mjs)).
-10. these three live inside `checkHtmlPatterns` (regex on the HTML string), which the static driver calls ([`detect-html.mjs:211`](../source/cli/engine/engines/static-html/detect-html.mjs)) and the browser calls on a cloned, footprint-stripped document ([`injected/index.mjs:1554-1558`](../source/cli/engine/browser/injected/index.mjs)). They are *not* in the regex `detectText` path because `detectText` does not call `checkHtmlPatterns`.
+8. these need element rects. The static driver calls `checkElementQuality`/`checkElementClippedOverflow` with `rect: null` ([`checks.mjs:1715`](../../source/cli/engine/rules/checks.mjs)), so the rect-gated branches inside never fire. The code runs; the findings cannot.
+9. `text-overflow` needs `scrollWidth`/`clientWidth`, which only a real layout engine has; it is wired only in the browser loop ([`injected/index.mjs:1490`](../../source/cli/engine/browser/injected/index.mjs)).
+10. these three live inside `checkHtmlPatterns` (regex on the HTML string), which the static driver calls ([`detect-html.mjs:211`](../../source/cli/engine/engines/static-html/detect-html.mjs)) and the browser calls on a cloned, footprint-stripped document ([`injected/index.mjs:1554-1558`](../../source/cli/engine/browser/injected/index.mjs)). They are *not* in the regex `detectText` path because `detectText` does not call `checkHtmlPatterns`.
 
 The shape of the matrix is the lesson: **the browser column is a superset**. Every
 rule that can run, runs there, because running a check in a live page is free.
@@ -276,25 +276,25 @@ single rule that only a screenshot can settle.
 
 ## 5. Dispatch, gating, exit code
 
-Dispatch is by **input type, not flag** ([`cli/main.mjs:147-251`](../source/cli/engine/cli/main.mjs)):
+Dispatch is by **input type, not flag** ([`cli/main.mjs:147-251`](../../source/cli/engine/cli/main.mjs)):
 URL → browser, `.html`/`.htm` → static, anything else → regex, stdin → a
 Claude-Code hook payload or raw text. The parent report's flowchart covers this;
 two facts worth pinning here:
 
 - **Provider gating is output-time only.** Rules tagged `gated: 'gpt'|'gemini'`
   are filtered out of the returned findings unless `--gpt`/`--gemini` is passed
-  (`filterByProviders`, [`registry/antipatterns.mjs:430-438`](../source/cli/engine/registry/antipatterns.mjs)).
+  (`filterByProviders`, [`registry/antipatterns.mjs:430-438`](../../source/cli/engine/registry/antipatterns.mjs)).
   The browser loop deliberately does **not** gate: it runs every rule and lets the
   Node return path filter, with an explicit comment that running checks in a live
-  page is free ([`injected/index.mjs:1461-1464`](../source/cli/engine/browser/injected/index.mjs)).
+  page is free ([`injected/index.mjs:1461-1464`](../../source/cli/engine/browser/injected/index.mjs)).
   Mental model: capture broadly, filter at emit.
-- **Exit code 2 when any finding exists** ([`cli/main.mjs:262`](../source/cli/engine/cli/main.mjs)),
+- **Exit code 2 when any finding exists** ([`cli/main.mjs:262`](../../source/cli/engine/cli/main.mjs)),
   a lint contract so CI and pre-commit can gate on it. Zero findings exits 0.
 
 Every engine threads an optional `profile` object through the same
 `{engine, phase, ruleId, target}` vocabulary
-([`profile/profiler.mjs`](../source/cli/engine/profile/profiler.mjs)). It is a
-no-op when `profile` is absent ([`profiler.mjs:41-43`](../source/cli/engine/profile/profiler.mjs)),
+([`profile/profiler.mjs`](../../source/cli/engine/profile/profiler.mjs)). It is a
+no-op when `profile` is absent ([`profiler.mjs:41-43`](../../source/cli/engine/profile/profiler.mjs)),
 so the instrumentation costs nothing in the normal path and yields p50/p95 per
 rule per runtime when turned on. That is a ready template for a YoinkIt "where did
 capture spend time / which layers produced spec entries" probe.

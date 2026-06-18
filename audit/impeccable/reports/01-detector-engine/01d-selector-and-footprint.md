@@ -7,7 +7,7 @@ is `scan()`/`dump()` not measuring YoinkIt's own toolbar; the text-rect helper i
 "measure the thing that moved, not its container." All of it is small and lifts
 cleanly.
 
-File: [`browser/injected/index.mjs`](../source/cli/engine/browser/injected/index.mjs)
+File: [`browser/injected/index.mjs`](../../source/cli/engine/browser/injected/index.mjs)
 unless noted.
 
 ---
@@ -86,12 +86,12 @@ live and detects staleness**:
 
 - `analyzeVisualContrastCandidate` does `document.querySelector(candidate.selector)`
   and returns `{status:'unresolved', reason:'stale selector'}` if it throws, or
-  `'missing element'` if it is gone ([:1090-1094](../source/cli/engine/browser/injected/index.mjs)).
+  `'missing element'` if it is gone ([:1090-1094](../../source/cli/engine/browser/injected/index.mjs)).
 - `captureVisualContrastCandidate` (Tier 3 screenshot) re-resolves the selector
   inside `page.evaluate` and bails if not found
-  ([`screenshot-contrast.mjs:118-150`](../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
+  ([`screenshot-contrast.mjs:118-150`](../../source/cli/engine/engines/visual/screenshot-contrast.mjs)).
 - `addVisualContrastResult` re-resolves before decorating
-  ([:1624-1630](../source/cli/engine/browser/injected/index.mjs)).
+  ([:1624-1630](../../source/cli/engine/browser/injected/index.mjs)).
 
 So a candidate generated at scan time is re-grounded at use time, and a DOM that
 moved between the two produces an honest `stale selector` rather than a wrong
@@ -153,7 +153,7 @@ for (const el of document.querySelectorAll('*')) {
 
 It skips its own overlay chrome, its own live-mode inspector, **and** Claude-in-Chrome
 nodes (`claude-`, `cic-` id prefixes). The quality check repeats the `claude-`/`cic-`
-skip ([`checks.mjs:1353-1354`](../source/cli/engine/rules/checks.mjs)). This explicit
+skip ([`checks.mjs:1353-1354`](../../source/cli/engine/rules/checks.mjs)). This explicit
 coexistence with another in-page agent is notable: it is the same situation YoinkIt
 is in, running alongside agent-browser and Claude-in-Chrome.
 
@@ -178,7 +178,7 @@ exactly the fields a consumer needs and nothing internal:
 findings: [{ type, category, severity, detail, ignoreValue, name, description }] }`.
 The selector is the round-trippable handle from §1; `rect` is `toJSON`'d;
 `isHidden` is computed with `el.checkVisibility?.()` and an `offsetWidth` fallback
-([:1205-1210](../source/cli/engine/browser/injected/index.mjs)).
+([:1205-1210](../../source/cli/engine/browser/injected/index.mjs)).
 
 ---
 
@@ -198,7 +198,7 @@ window.impeccableGetLastVisualContrastAnalyses = () => [...];
 
 In extension mode the engine does **not** auto-scan. It announces
 `window.postMessage({source:'impeccable-ready'})` and waits for a command
-([:1855-1928](../source/cli/engine/browser/injected/index.mjs)). That `ready`
+([:1855-1928](../../source/cli/engine/browser/injected/index.mjs)). That `ready`
 handshake is the fix for the "tried to use the engine before it loaded" race, which
 is the exact failure mode of YoinkIt's "arm before `__cap` exists" (covered for the
 extension surface in [`02-chrome-extension.md`](02-chrome-extension.md)).

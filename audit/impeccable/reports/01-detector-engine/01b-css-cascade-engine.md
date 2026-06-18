@@ -8,7 +8,7 @@ parsers, **no jsdom, no browser**. About 1000 lines in one file. If a fresh agen
 ever needs to compute styles for a page without rendering it, this is the
 reference implementation to read first and the pitfalls to inherit.
 
-File: [`engines/static-html/css-cascade.mjs`](../source/cli/engine/engines/static-html/css-cascade.mjs).
+File: [`engines/static-html/css-cascade.mjs`](../../source/cli/engine/engines/static-html/css-cascade.mjs).
 All line refs are into that file unless noted.
 
 ---
@@ -30,10 +30,10 @@ Rather than carry a pile of jsdom workarounds forever, they deleted jsdom (it is
 not in `package.json`) and wrote a cascade that handles those cases correctly at
 the source. The `--fast` regex-only flag became a deprecated no-op because, with a
 real cascade, the static path is fast and covers every rule
-([`cli/main.mjs:122-130`](../source/cli/engine/cli/main.mjs)).
+([`cli/main.mjs:122-130`](../../source/cli/engine/cli/main.mjs)).
 
 The parsers it *does* use are lazy-imported and the engine falls back to the regex
-tier if they are missing ([`detect-html.mjs:115-140`](../source/cli/engine/engines/static-html/detect-html.mjs)):
+tier if they are missing ([`detect-html.mjs:115-140`](../../source/cli/engine/engines/static-html/detect-html.mjs)):
 `htmlparser2` (parse HTML to a node tree), `css-tree` (parse CSS to an AST),
 `css-select` (selector matching against htmlparser2 nodes), `domutils`
 (text extraction).
@@ -252,7 +252,7 @@ const cssPath = path.resolve(fileDir, href);
 ```
 
 This is why the CLI nudges users toward scanning the running URL for "more
-accurate results" ([`cli/main.mjs:174-195`](../source/cli/engine/cli/main.mjs)): a
+accurate results" ([`cli/main.mjs:174-195`](../../source/cli/engine/cli/main.mjs)): a
 static file scan can only see CSS that lives next to it on disk. Remote
 stylesheets, CDN Tailwind, and anything the dev server generates are invisible to
 the static path and only show up under the browser engine.
@@ -304,7 +304,7 @@ as an active pre-pass.
   `normalizeStaticCssValue` resolves `var()` against the per-node `customProps`
   map, so the computed style already carries the real width and color. The static
   driver passes `null` for `overrides`
-  ([`detect-html.mjs:92`](../source/cli/engine/engines/static-html/detect-html.mjs)).
+  ([`detect-html.mjs:92`](../../source/cli/engine/engines/static-html/detect-html.mjs)).
 - **`unwrapCssAtLayer`** (line 187-219) is a brace-balancing string flattener that
   stripped `@layer { ... }` wrappers before parsing. The cascade made it redundant
   too: `collectStaticCssRules` walks into `@layer` blocks in the css-tree AST
@@ -332,7 +332,7 @@ not fully cleaned up.
 - **STEAL the "hand-roll the tokenizer, lazy-import the parser" split.** The
   quote/paren-aware `splitCssList`/`splitCssTokens` are tiny and dependency-free;
   the heavy parsers are lazy-imported and degrade to the next engine if absent
-  ([`detect-html.mjs:138-140`](../source/cli/engine/engines/static-html/detect-html.mjs)).
+  ([`detect-html.mjs:138-140`](../../source/cli/engine/engines/static-html/detect-html.mjs)).
   This keeps the dependency-free core dependency-free and the optional analysis
   optional, which is exactly YoinkIt's posture for `capture-animation.js`.
 - **AVOID assuming the static path is faithful.** §6 is the warning. For YoinkIt
