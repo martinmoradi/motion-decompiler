@@ -1,0 +1,53 @@
+# Subslice 01b Cross-Check Notes
+
+Target: `audit/impeccable/reports/01-detector-engine/01b-css-cascade-engine.md`
+Parent context: `audit/impeccable/reports/01-detector-engine/01-detector-engine.md`
+Source root: `audit/impeccable/source`
+
+## Executive Delta
+
+- The core story is confirmed against source commit `1c897a09c86ea7ed7e5cc3affaabcbbb46a05a7d`: static `.html` analysis uses `htmlparser2`, `css-tree`, `css-select`, and `domutils`; `jsdom` is absent from `package.json`; parser imports are lazy and fall back to regex detection; `--fast` is deprecated and ignored.
+- The algorithm map is mostly accurate: `collectStaticCssRules`, `staticSpecificity`, `compareStaticPriority`, `expandStaticDeclaration`, `StaticElement` / `StaticDocument`, `collectStaticCssText`, and `buildStaticStyleMap` match the leaf's descriptions.
+- Three corrections should be applied before integrating: state pseudo-class behavior is overstated, "every rect is 0x0" should be "layout APIs are absent or rect is passed as null," and the generated/distribution copy count for the dead-code search is 13 copies plus the canonical CLI file, not 16 generated harness copies.
+- The leaf's local markdown links all resolve from `reports/01-detector-engine/`: parent overview, `01a`, `01c`, `../../source/cli/engine/engines/static-html/css-cascade.mjs`, `../../source/cli/engine/cli/main.mjs`, and `../../source/cli/engine/engines/static-html/detect-html.mjs`.
+
+## Corrections To Apply
+
+| Report area | Current claim | Evidence | Suggested change |
+|---|---|---|---|
+| §6 "No states" | Selectors with `:hover`, `:focus`, `:checked` still match the base element, so state declarations can apply to resting elements. | `buildStaticStyleMap` calls `modules.selectAll(rule.selector, root.children || [])` and skips only thrown selector errors (`cli/engine/engines/static-html/css-cascade.mjs:903-918`). An executable probe against the declared package versions (`css-select@7.0.0`, `htmlparser2@12.0.0` from `package.json:81-85`) returned `.btn:hover = 0`, `.btn:focus = ERROR Unknown pseudo-class :focus`, and `input:checked = 0`; `.btn:where(.btn)` and `a:not(.nope)` matched. | Reword to: state selectors are not modeled. Some dynamic pseudos match nothing, some unsupported pseudos are skipped by the try/catch and profiled as `unsupported-selector`; they do not generally apply to the resting element. Keep the caveat that state CSS is not faithfully represented. |
+| §6 "No layout" | "Every rect is `0x0`." | `StaticElement` implements DOM-ish traversal and selector methods but no `getBoundingClientRect` (`css-cascade.mjs:721-797`). The static quality adapter explicitly passes `rect: null` to skip rect-dependent checks (`cli/engine/rules/checks.mjs:1705-1715`); icon-tile reads explicit CSS `width` / `height` instead of layout (`checks.mjs:1802-1826`); oversized-H1 static path calls `checkOversizedH1` without rect or viewport (`checks.mjs:2253-2258`). | Change to: no rendered layout is available. Static adapters either pass `rect: null`, avoid rect-gated checks, or use explicit CSS dimensions where a rule can tolerate that approximation. |
+| §7 dead-code census | "Verified across the entire source tree ... all 16 generated harness copies." | `rg --hidden --glob '!node_modules/**'` finds `buildBorderOverrideMap`, `unwrapCssAtLayer`, `normalizeColorForCheck`, and `NAMED_COLORS` only in `css-cascade.mjs` definitions, internal uses, and export lists. But `find -L audit/impeccable/source -path '*/skills/impeccable/scripts/detector/engines/static-html/css-cascade.mjs'` returns 13 distribution copies: `.agents`, `.claude`, `.cursor`, `.gemini`, `.github`, `.kiro`, `.opencode`, `.pi`, `.qoder`, `.rovodev`, `.trae`, `.trae-cn`, and `plugin`. `.codex` currently contains only `hooks.json`. | Keep the dead-code conclusion, but replace "16 generated harness copies" with "13 distribution copies plus the canonical CLI source" or avoid a specific generated-copy count. |
+| §7 dead-code framing | `buildBorderOverrideMap` is a jsdom-era pre-pass and `unwrapCssAtLayer` is unused. | Confirmed. Canonical definitions and exports are in `css-cascade.mjs:74-177`, `187-219`, and `981-986`. The current static driver passes `null` for border overrides (`detect-html.mjs:91-93`) and uses `collectStaticCssRules` to walk `@layer` in the AST (`css-cascade.mjs:681-718`). | No factual change needed beyond the copy count. This is a good correction to preserve. |
+
+## Deep Implementation Notes
+
+- The static parser dependency and fallback story is exactly as described. `detectHtml` lazy-imports `htmlparser2`, `css-select`, `css-tree`, and `domutils` inside a profiled setup block (`detect-html.mjs:115-137`), and on import failure returns `detectText(html, filePath, options)` (`detect-html.mjs:138-140`). This is reinforced by the clone having no installed parser packages while `package.json` declares them as dependencies (`package.json:80-86`).
+- `detectHtml` parses with `lowerCaseAttributeNames: false` and `lowerCaseTags: true` (`detect-html.mjs:142-149`), then collects CSS, builds the static style map, and returns a `{document, getComputedStyle}` facade (`detect-html.mjs:151-154`; `css-cascade.mjs:855-859`).
+- The CSS collection scope is local-only. `collectStaticCssText` includes inline `<style>` text and local `<link rel="stylesheet">` hrefs, but skips empty, non-stylesheet, `http(s)://`, and protocol-relative hrefs before resolving the path from the scanned file's directory (`css-cascade.mjs:862-884`).
+- Rule collection is flat by design. `collectStaticCssRules` parses with `parseCustomProperty: false`, skips rules under keyframes, emits one flat rule per selector-list member, and recurses only into `@media`, `@supports`, and `@layer` blocks without evaluating conditions or layer precedence (`css-cascade.mjs:681-718`).
+- Specificity and cascade ordering match the report. `staticSpecificity` strips simple `:where(...)` with a regex before counting ids, class-like selectors, and type selectors (`css-cascade.mjs:645-655`). `compareStaticPriority` uses `!important`, inline, specificity triple, then later source order (`css-cascade.mjs:633-642`), and inline styles are applied after stylesheet rules with `specificity: [1,0,0]` plus `inline: true` (`css-cascade.mjs:931-943`).
+- Shorthand expansion is accurately described. `background`, border shorthands, `outline`, `padding`, `margin`, `font`, `transition`, and `animation` are decomposed in `expandStaticDeclaration` (`css-cascade.mjs:523-630`), using quote/paren-aware `splitCssList` and `splitCssTokens` (`css-cascade.mjs:354-397`).
+- Computed style generation is a top-down fold. `computeNode` inherits custom properties by copying the parent map, resolves node-local custom props first, seeds defaults or inherited computed values, normalizes non-custom declarations, stores a `makeStaticStyle(values)` object, and recurses into tag children (`css-cascade.mjs:947-967`). The inherited property set and defaults are small and rule-oriented (`css-cascade.mjs:225-285`).
+- The modern border-color exception is real and precise. `normalizeStaticCssValue` preserves `oklch`, `oklab`, `lch`, `lab`, `hsl`, and `hwb` only for `border*Color` props; other color-like props are parsed to `rgb()` / `rgba()` when possible (`css-cascade.mjs:428-435`).
+- The DOM facade covers the rule adapters' normal needs: `parentElement`, `previousElementSibling`, `children`, text `childNodes`, `textContent`, `className`, `id`, `getAttribute`, `querySelector(All)`, `closest`, and `contains` on `StaticElement` (`css-cascade.mjs:721-797`); wrapper and style identity use WeakMaps in `StaticDocument` (`css-cascade.mjs:799-843`).
+- The static driver still carries `customPropMap = null` into several adapters (`detect-html.mjs:156-170`), because custom properties are resolved inside the cascade before the computed-style object is handed to the rules. That supports the leaf's claim that the old border override map is obsolete.
+
+## Paradigms Worth Importing
+
+- Keep the "source-fidelity with fail-open fallback" pattern. The static path does serious local parsing, but if parser packages are unavailable it degrades to regex rather than blocking detection (`detect-html.mjs:115-140`). For YoinkIt, this maps cleanly to optional non-core analysis around a dependency-free capture engine.
+- The cascade's tokenizer/parser split is worth copying selectively: small quote/paren-aware tokenizers live in the local file for shorthands, while heavyweight HTML/CSS parsers remain lazy. This is the right boundary for arbitrary third-party input.
+- Preserve measured/source-native values until the downstream rule needs another representation. The border color exception (`css-cascade.mjs:431-435`) is the same design instinct YoinkIt should use for captured transforms, easings, and colors: avoid normalizing away signal too early.
+- Treat the static path as a map/discovery aid, not authority for rendered truth. The verified gaps around layout, state pseudos, media conditions, and layer precedence are directly aligned with YoinkIt's map-vs-capture split.
+
+## Link And Citation Checks
+
+- All markdown links in the leaf resolve from `audit/impeccable/reports/01-detector-engine/`: `01-detector-engine.md`, `01a-rule-trinity-and-dispatch.md`, `01c-color-and-contrast-tiers.md`, `../../source/cli/engine/engines/static-html/css-cascade.mjs`, `../../source/cli/engine/cli/main.mjs`, and `../../source/cli/engine/engines/static-html/detect-html.mjs`.
+- Line references are broadly current for source commit `1c897a09c86ea7ed7e5cc3affaabcbbb46a05a7d`: `css-cascade.mjs` is 1015 lines; `collectStaticCssRules` starts at 681; `staticSpecificity` at 645; `compareStaticPriority` at 633; `expandStaticDeclaration` at 523; `StaticElement` at 721; `StaticDocument` at 799; `buildStaticWindow` at 855; `collectStaticCssText` at 862; `buildStaticStyleMap` at 887; `computeNode` at 947.
+- The cited `detect-html.mjs:92` call is accurate: the static border rule passes `null` for `overrides`.
+- The cited `cli/main.mjs:122-130` `--fast` deprecation is accurate.
+
+## Open Questions
+
+- Should the integrated report patch the source comments' lingering "jsdom" wording as report evidence, or only describe it as source archaeology? The implementation is no-jsdom, but comments in `checks.mjs` and `css-cascade.mjs` still use "jsdom" to mean the no-layout static adapter.
+- The `staticSpecificity` `:where(...)` stripper is intentionally regex-based and handles simple cases. If future integration wants a sharper caveat, verify nested selectors such as `:where(.a:not(.b))`, where the first-close-paren regex may leave residue.
