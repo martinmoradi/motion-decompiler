@@ -324,6 +324,129 @@ test('yoinkit map-gate --approve blocks required assertions that are not pass', 
   ]));
 });
 
+test('yoinkit map-gate --approve fails closed when a fresh assertion artifact has no rows', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd, {
+    staticAssertions: [],
+  });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('02-static-map/assertions.json:assertions');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '02-static-map/assertions.json:assertions',
+      source: 'report-input',
+      status: 'invalid',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve fails closed when a fresh assertion artifact is missing its assertions array', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const assertionsFile = path.join(motionScoutDir(config.runDir), 'assertions.json');
+  const artifact = readJson(assertionsFile);
+  delete artifact.assertions;
+  writeJson(assertionsFile, artifact);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:20:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('03-motion-scout/assertions.json:assertions');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '03-motion-scout/assertions.json:assertions',
+      source: 'report-input',
+      status: 'invalid',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve fails closed when a fresh assertion artifact has the wrong schema version', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const assertionsFile = path.join(staticMapDir(config.runDir), 'assertions.json');
+  const artifact = readJson(assertionsFile);
+  artifact.schemaVersion = 999;
+  writeJson(assertionsFile, artifact);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:21:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('02-static-map/assertions.json:schema-version');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '02-static-map/assertions.json:schema-version',
+      source: 'report-input',
+      status: 'invalid',
+    }),
+  ]));
+});
+
+test('yoinkit map-gate --approve fails closed when a fresh Motion Scout candidates artifact has the wrong shape', () => {
+  const cwd = tempDir();
+  const config = prepareGateRun(cwd);
+  const candidatesFile = path.join(motionScoutDir(config.runDir), 'motion-candidates.json');
+  const artifact = readJson(candidatesFile);
+  delete artifact.schemaVersion;
+  artifact.candidates = {};
+  writeJson(candidatesFile, artifact);
+  runMapReport(config.runDir, { now: new Date('2026-06-17T13:22:00.000Z') });
+
+  const result = runGate(cwd, [config.runDir, '--approve']);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('03-motion-scout/motion-candidates.json:schema-version');
+  const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+  expect(gate.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: '03-motion-scout/motion-candidates.json:schema-version',
+      source: 'report-input',
+      status: 'invalid',
+    }),
+    expect.objectContaining({
+      id: '03-motion-scout/motion-candidates.json:candidates',
+      source: 'report-input',
+      status: 'invalid',
+    }),
+  ]));
+});
+
+for (const { name, text } of [
+  { name: 'empty', text: '' },
+  { name: 'garbage', text: 'not a markdown coverage table' },
+]) {
+  test(`yoinkit map-gate --approve fails closed when fresh static coverage is ${name}`, () => {
+    const cwd = tempDir();
+    const config = prepareGateRun(cwd);
+    writeText(path.join(staticMapDir(config.runDir), 'coverage.md'), text);
+    runMapReport(config.runDir, { now: new Date('2026-06-17T13:23:00.000Z') });
+
+    const result = runGate(cwd, [config.runDir, '--approve']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('static-map-coverage:unparseable');
+    const gate = readJson(path.join(mapReportDir(config.runDir), 'gate.json'));
+    expect(gate.coverageSummary).toMatchObject({
+      staticMap: { incompleteRequired: 1 },
+    });
+    expect(gate.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'static-map-coverage:unparseable',
+        source: 'static-map-coverage',
+        status: 'invalid',
+      }),
+    ]));
+  });
+}
+
 test('yoinkit map-gate --approve blocks stale Report v0 inputs', () => {
   const cwd = tempDir();
   const config = prepareGateRun(cwd);
