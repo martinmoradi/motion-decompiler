@@ -48,11 +48,17 @@ root.
 >   three-layer derivation, the **lossy motion projection** (the memory kept 1 of ~16
 >   real motion values), the three-file git-tracked `.impeccable/` directory,
 >   versioning, and the real-≠-demo-≠-spec-≠-fixture schema looseness.
-> - [`06b-generation-and-migration.md`](06b-generation-and-migration.md): the
->   LLM-driven generation path (`/impeccable document`, "extensions only",
->   never-silently-overwrite, seed mode), the day-zero synthesis rule, the v1→v2
->   reshaping, what `schemaVersion` actually does at read time (nothing), and where
->   `mdNewerThanJson` really lives (the readers, not `document.md`).
+> - [`06b-generation-and-migration.md`](06b-generation-and-migration.md):
+>   generation is a **prompt, not a program** — `/impeccable document` is 429 lines
+>   of English an LLM follows with its `Write` tool; **no code writes the sidecar**
+>   (the only nearby code, `design-parser.mjs`, *reads* the prose back). The full
+>   init→scan/seed→write pipeline, the component translation rules that are the
+>   *only* place generation reliably emits motion (denormalized, as literal CSS),
+>   the day-zero synthesis rule (which never names motion), the seed-mode **Motion
+>   energy** question (motion is generation *input*, never *output*), the v1→v2
+>   reshaping, why `schemaVersion` is a scattered naming convention no reader
+>   dispatches on, where `mdNewerThanJson` really lives (the readers), and how you
+>   verify a prompt-generator (run real LLMs, assert on the trace).
 > - [`06c-the-enforcement-reader.md`](06c-the-enforcement-reader.md):
 >   `design-system.mjs` traced end to end — allowed-set construction (every
 >   `canonical` + every `tonalRamp` stop), **tolerance** drift-flagging
@@ -87,28 +93,45 @@ root.
 >   ~60 flat tokens — each `tonalRamp` is gathered real stops, which is why ramp length
 >   varies 3→25 instead of the spec's synthesised "8-step." Synthesis is the day-zero
 >   fallback, not what happened here. (06a §2c, §3a)
+> - **Generation is a prompt, not a program — and `design-parser.mjs` is a *reader*,
+>   not "the writer."** No code in the repo writes `.impeccable/design.json`; every
+>   `design.json` reference in `skill/`/`cli/` is a reader or a path helper (grep
+>   clean this session). The sidecar is hand-written by the LLM following
+>   `document.md`. The nearby `design-parser.mjs` parses a *written* `DESIGN.md` back
+>   into a render model, and its `schemaVersion: 2` (`:830`) is stamped on **that
+>   model**, a different object than the sidecar. Earlier drafts (06a §6a) calling it
+>   "the writer" are imprecise; corrected here and in 06b §1. (06b §1)
 > - **`mdNewerThanJson` is a reader-side mtime heuristic, not a `document.md` /
 >   generation field.** The survey files it under generation/migration. It does not
 >   exist in `document.md`; it is computed by comparing mtimes in
 >   `design-system.mjs:386` and `live-server.mjs:574`, consumed by `hook-lib.mjs:1237`,
 >   and rendered by `live-browser.js:10474`. `document.md:244` references only the
->   downstream "stale-hint". (06b §4, 06c §4)
-> - **No reader branches on `schemaVersion`.** The survey says "readers branch on
->   `schemaVersion`." `design-system.mjs` has zero references to it; `live-server.mjs:545`
->   mentions it only in a comment. A v1 file is not migrated at read time — it
->   silently reads as **empty**. Durability comes from *regeneration*, not version
->   dispatch. (06b §3)
+>   downstream "stale-hint". It does, however, *trigger* generation (re-run
+>   `document`), so it belongs to the lifecycle. (06b §7, 06c §4)
+> - **No reader branches on `schemaVersion` — it is a scattered naming convention.**
+>   The survey says "readers branch on `schemaVersion`." `design-system.mjs` has zero
+>   references to it; `live-server.mjs:545` mentions it only in a comment. Worse, the
+>   field name is reused on **≥4 unrelated artifacts** (the sidecar `:2` LLM-written,
+>   the parsed-prose model `:2` code-written, the live-apply event `:1`, the apply
+>   transaction `version:1`, the fixture renamed `version:2`), none reconciled. A v1
+>   file is not migrated at read time — it silently reads as **empty**. Durability
+>   comes from *regeneration*, not version dispatch. (06b §6)
 > - **`motion[].duration` is demo-only.** The survey's "lived schema is `{name,
 >   value, duration?, purpose}`" is accurate only as a *union*. `duration` appears in
 >   exactly one of three instances — the worked-example demo
 >   (`DESIGN.json:155-168`). The real committed artifact (`design.json:226-232`) and
 >   the `document.md` schema (`:264-266`) both ship `{name, value, purpose}` with no
->   duration; the curve is tokenised, the duration lives inline in component CSS. (06a §3d, §6; 06b §2)
+>   duration; the curve is tokenised, the duration lives inline in component CSS. The
+>   demo's *two* motion tokens both carry `duration` but use the trivial `value:
+>   "ease"`, and one is reserved-but-unused — authored ahead of code. (06a §3d, §6; 06b §4e)
 > - **Synthesize-on-thin does not name motion.** The survey generalises "synthesise
 >   a plausible default token (`document.md:313`)" onto motion. `:313` is about
 >   component primitives, `:317` about tonal ramps; no directive synthesizes motion.
->   The only motion default is the `ease-standard` example at `:265`. A *measured*
->   memory must never synthesize motion — the catch. (06b §2, 06d §9)
+>   The only motion default is the `ease-standard` example at `:265`. The one place
+>   generation *asks* about motion (seed-mode "Motion energy", `:368`) feeds the
+>   answer into Overview voice and Elevation and emits **no motion token** — motion
+>   is generation input, never output. A *measured* memory must never synthesize
+>   motion — the catch. (06b §4, 06d §9)
 > - **The four "same-schema" instances disagree** (real, demo, `document.md` spec, and
 >   a sveltekit test fixture). colorMeta `description` and `roundedMeta` are present in
 >   the real artifact but **absent** from the demo; `shadows` is 4 tokens in the real
@@ -139,7 +162,9 @@ re-verified this session.
 | [`.impeccable/config.json`](../../source/.impeccable/config.json) | 84 | The detector/hook ignore model — not design memory. ([`05c`](../05-hook-system/05c-config-and-ignore-model.md)) |
 | [`.impeccable/live/config.json`](../../source/.impeccable/live/config.json) | 6 | Live-mode injection config. (06a §1) |
 | **Generation + migration** | | |
-| [`skill/reference/document.md`](../../source/skill/reference/document.md) | 429 | `/impeccable document`: LLM writes prose then "extensions only" sidecar; synthesize-on-thin; v1→v2 migration note. (06b) |
+| [`skill/reference/document.md`](../../source/skill/reference/document.md) | 429 | **The generator — a prompt, not a program.** The LLM follows it to write prose then the "extensions only" sidecar: 7-source scan, auto-extract, qualitative interview, component translation rules, synthesize-on-thin, seed mode (Motion-energy `:368`), v1→v2 migration note. (06b §1-6) |
+| [`skill/reference/init.md`](../../source/skill/reference/init.md) | 172 | Generation's **upstream**: writes `PRODUCT.md` (register) and hands off to `document` (`:134`, auto-detect scan vs seed). (06b §2a) |
+| [`skill/scripts/lib/design-parser.mjs`](../../source/skill/scripts/lib/design-parser.mjs) | 842 | The only code *near* generation — and it **reads** `DESIGN.md` prose back into a render model, stamping a *different* `schemaVersion: 2` (`:830`). Not the sidecar's writer. (06b §1b) |
 | **Consumption + enforcement** | | |
 | [`cli/engine/design-system.mjs`](../../source/cli/engine/design-system.mjs) | 750 | **The enforcement reader.** Folds memory → allowed set; flags `design-system-color/-font/-radius` drift within tolerance. (06c) |
 | [`skill/scripts/live-server.mjs`](../../source/skill/scripts/live-server.mjs) | 1134 | `/design-system.json` (`:537-596`): merges raw sidecar + parsed `DESIGN.md` + `mdNewerThanJson`. (06c §4) |
@@ -148,7 +173,7 @@ re-verified this session.
 | [`skill/reference/product.md`](../../source/skill/reference/product.md) | 60 | Product motion doctrine: `150–250 ms`, state-not-decoration, no page-load (`:38,40-42`). (06c §5) |
 | **The worked example** | | |
 | [`demos/landing-demo/DESIGN.json`](../../source/demos/landing-demo/DESIGN.json) | 281 | Demo sidecar; the `{name,value,duration?,purpose}` motion shape + reserved `ease-card` (`:155-168`). (06a §6) |
-| [`demos/landing-demo/DESIGN.md`](../../source/demos/landing-demo/DESIGN.md) | 207 | Demo prose the `narrative` is pulled from. (06a §5, 06b §1) |
+| [`demos/landing-demo/DESIGN.md`](../../source/demos/landing-demo/DESIGN.md) | 207 | Demo prose the `narrative` is pulled from. (06a §5, 06b §5) |
 | [`demos/landing-demo/PRODUCT.md`](../../source/demos/landing-demo/PRODUCT.md) | 39 | The bare `## Register` value (`brand`, `:5`). (06c §5) |
 | **YoinkIt (the measured side)** | | |
 | [`extension/capture-animation.js`](../../../../extension/capture-animation.js) **YoinkIt** | 1530 | The `__cap` engine; the `dump()` spec `{meta, evidence, summary, stagger, findings[]}` (`:1344-1368`). (06d §2) |
@@ -170,10 +195,13 @@ pair, 06a §1) backed by three disciplines and conditioned by one field:
   **junior half of a two-file memory**: the *sidecar* to a Stitch-standard root
   `DESIGN.md`, carrying exactly what Stitch's frontmatter schema rejects — and motion
   is one of those exiles (06a §1).
-- **Generation** ([`06b`](06b-generation-and-migration.md)) — `/impeccable document`
-  has an **LLM write** the memory: `DESIGN.md` prose, then the sidecar as "extensions
-  only", with day-zero synthesis, never-silently-overwrite, seed mode, and a
-  documented v1→v2 reshaping.
+- **Generation** ([`06b`](06b-generation-and-migration.md)) — a **prompt, not a
+  program**: `/impeccable document` has an **LLM write** the memory (`DESIGN.md`
+  prose, then the sidecar as "extensions only") with no generator code behind it.
+  Day-zero synthesis, never-silently-overwrite, seed mode (whose lone motion
+  question produces no motion token), a documented v1→v2 reshaping migratable only
+  by re-authoring. *YoinkIt's generation is the inverse: a deterministic
+  `__cap.dump()` + fold with no prompt.*
 - **Enforcement** ([`06c`](06c-the-enforcement-reader.md)) — `design-system.mjs`
   folds the memory into an allowed set (every `canonical` + every `tonalRamp` stop)
   and flags any color/font/radius in code that drifts off it **within a tolerance**;
@@ -348,10 +376,12 @@ named sub-dive, with tags matching the survey's scheme (**ADOPT** a pattern/sche
    block (one direction; reverse imports as `confidence: unknown`).
    *([`06a`](06a-the-persisted-artifact.md) §3d, [`06d`](06d-a-motion-json-for-yoinkit.md) §5)*
 
-5. **The lifecycle disciplines — ADOPT.** Stamp versions, never silently overwrite,
-   ship a thin memory that commits to enrichment (seed mode), track staleness as a
-   reader-side mtime/hash heuristic. All inversion-safe.
-   *([`06b`](06b-generation-and-migration.md) §1-2, §4)*
+5. **The lifecycle disciplines (not the generator) — ADOPT.** Stamp versions, never
+   silently overwrite, ship a thin memory that commits to enrichment (seed mode),
+   track staleness as a reader-side mtime/hash heuristic. All inversion-safe. But
+   **don't** grow a `document.md`: Impeccable generates with a non-deterministic
+   prompt, YoinkIt already has the better, deterministic generator.
+   *([`06b`](06b-generation-and-migration.md) §1, §7)*
 
 6. **The motion `narrative` — EXPLORE.** Pair measured tokens with human-intent prose
    from Notes (not an LLM), so the memory says what is load-bearing.
@@ -367,8 +397,10 @@ named sub-dive, with tags matching the survey's scheme (**ADOPT** a pattern/sche
 
 9. **Confidence as the spine; coverage shows thinness; never synthesize —
    INSPIRATION.** The disciplines that keep an accumulating measured memory from
-   decaying into an authored one. The catch, made structural.
-   *([`06b`](06b-generation-and-migration.md) §2, [`06d`](06d-a-motion-json-for-yoinkit.md) §9)*
+   decaying into an authored one. The catch, made structural — including the four
+   authoring moves to refuse (synthesize-on-thin, reserved tokens, denormalized
+   motion, the Motion-energy laundering).
+   *([`06b`](06b-generation-and-migration.md) §4, §9, [`06d`](06d-a-motion-json-for-yoinkit.md) §9)*
 
 ---
 
@@ -384,17 +416,30 @@ named sub-dive, with tags matching the survey's scheme (**ADOPT** a pattern/sche
   `extensions` bag. That is *why* `extensions.motion` is one row, and the strongest
   argument that YoinkIt cannot fork Impeccable's format — a motion tool must make
   motion the top-level subject, not an extensions guest. (06a §1a, §2b)
+- **Generation is a prompt, with no program behind it.** `/impeccable document` is
+  429 lines of English; no code writes the sidecar (grep clean), and the only nearby
+  code (`design-parser.mjs`) reads the prose *back*. So the "mature" static-design
+  tool generates by asking a model nicely, while the "throwaway" motion tool
+  generates by measuring (`__cap.dump()` + a pure fold). For generation
+  specifically, YoinkIt's half is the deterministic, testable, can't-invent one —
+  don't trade it for a `document.md`. (06b §1, §8)
+- **The Motion-energy question proves the format can't hold motion.** The one moment
+  generation asks how a design should move (seed-mode Q3, `document.md:368`) feeds
+  the answer into Overview voice and a flat-vs-layered *shadow* decision (`:389,392`)
+  and emits **no motion token**. Motion is generation input, never output — the
+  strongest single argument that a motion tool cannot fork this format. (06b §4d)
 - **A v1 `design.json` reads as empty, not migrated.** No reader branches on
   `schemaVersion` ([`design-system.mjs`](../../source/cli/engine/design-system.mjs)
   has none; [`live-server.mjs:545`](../../source/skill/scripts/live-server.mjs) only a
-  comment). The "migratable schema" is migratable by **regeneration**, which YoinkIt
+  comment), and the field name is a scattered convention reused on ≥4 unrelated
+  artifacts. The "migratable schema" is migratable by **regeneration**, which YoinkIt
   cannot do (it must re-measure) — so a YoinkIt reader must fail *visible*, not
-  *silent-empty*. (06b §3)
+  *silent-empty*. (06b §6)
 - **`mdNewerThanJson` lives in two readers with no shared helper.** Computed
   identically at [`design-system.mjs:386`](../../source/cli/engine/design-system.mjs)
   and [`live-server.mjs:574`](../../source/skill/scripts/live-server.mjs) — the
   hand-sync hazard [`05c`](../05-hook-system/05c-config-and-ignore-model.md) §5 warns
-  about, here in the design-memory slice. (06b §4, 06c §4)
+  about, here in the design-memory slice. (06b §7, 06c §4)
 - **The schema is loose: real ≠ demo ≠ spec ≠ fixture.** The real artifact, the
   worked-example demo, the `document.md` schema, and a sveltekit test fixture disagree
   on `description`, `roundedMeta`, `shadows` emptiness, `motion[].duration`, ramp
