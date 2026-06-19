@@ -191,7 +191,7 @@ which later lets any `border-radius >= 99px` pass as an intended pill (`:417`).
 const out = {
   present: true,
   sourcePath, sidecarPath,
-  mdNewerThanJson: input.mdNewerThanJson === true,   // computed in the loader, 06b §4
+  mdNewerThanJson: input.mdNewerThanJson === true,   // computed in the loader, 06b §7
   allowedFonts: new Set(),
   allowedColorKeys: new Map(),
   allowedRadii: [],
@@ -347,7 +347,7 @@ Three things to read off it:
   prose from `parsed`, components into a shadow DOM. The server's job is to hand
   over both plus the staleness flag.
 - **`mdNewerThanJson` is recomputed here independently** (`:574`), the same
-  mtime+1000ms heuristic as the loader ([`06b`](06b-generation-and-migration.md) §4,
+  mtime+1000ms heuristic as the loader ([`06b`](06b-generation-and-migration.md) §7,
   `design-system.mjs:386`). Two readers, one heuristic, no shared helper — a small
   duplication of the kind [`05c`](../05-hook-system/05c-config-and-ignore-model.md)
   §5 documents elsewhere. The panel renders a stale hint when it is true

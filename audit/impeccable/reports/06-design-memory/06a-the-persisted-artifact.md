@@ -174,8 +174,8 @@ Six top-level keys, in file order:
 
 | Key | Lines | Type | Note |
 |---|---|---|---|
-| `schemaVersion` | `:2` | integer `2` | a number, not `"2"`. **No reader branches on it** (06b §3). |
-| `generatedAt` | `:3` | ISO-8601 string (ms precision) | write-time stamp; the freshness baseline `mdNewerThanJson` compares against (06b §4, 06c §4). |
+| `schemaVersion` | `:2` | integer `2` | a number, not `"2"`. **No reader branches on it** (06b §6). |
+| `generatedAt` | `:3` | ISO-8601 string (ms precision) | write-time stamp; the freshness baseline `mdNewerThanJson` compares against (06b §7, 06c §4). |
 | `title` | `:4` | string | `"Design System: Impeccable"`. |
 | `extensions` | `:5-277` | object | the token metadata the Stitch frontmatter can't hold. §3. |
 | `components` | `:278-327` | array | self-contained drop-in primitives. §4. |
@@ -653,7 +653,7 @@ One `rules[]` entry verbatim ([`.impeccable/design.json:340-344`](../../source/.
 
 The `section` discriminator is a **machine-only field added on top of the prose**:
 the rule's *text* is lifted verbatim from `DESIGN.md`, and the JSON adds the
-structured tag (06b §1 traces the prose→JSON mapping). Its values and counts:
+structured tag (06b §5 traces the prose→JSON mapping). Its values and counts:
 
 | `section` | rules |
 |---|---:|
@@ -703,10 +703,12 @@ structure, with the inversion that YoinkIt's prose comes from a human *Note*
 Two version facts a fresh agent should not trip on:
 
 - **No reader branches on `schemaVersion`.** `design-system.mjs` has zero
-  references to it; `live-server.mjs:545` mentions it only in a comment. The
-  writer (`design-parser.mjs:830`) stamps `schemaVersion: 2`. A v1 file is not
+  references to it; `live-server.mjs:545` mentions it only in a comment. **No code
+  writes the sidecar at all** — the LLM hand-writes it (06b §1); the
+  `schemaVersion: 2` that code *does* stamp (`design-parser.mjs:830`) is on the
+  parsed-`DESIGN.md` render model, a different object (06b §1b). A v1 file is not
   migrated at read time — it silently reads as *empty*. Durability comes from
-  *regeneration*, not version dispatch (06b §3). For YoinkIt, which cannot
+  *regeneration*, not version dispatch (06b §6). For YoinkIt, which cannot
   regenerate (it must re-measure), this means a stale-schema file must fail
   *visible*, not silent-empty.
 - **The version field is not even spelled consistently across the repo.** The

@@ -216,7 +216,7 @@ home [`05c`](../05-hook-system/05c-config-and-ignore-model.md) and
     "regionsTotal": 7,                               // from the Map's place-first page model
     "viewports": ["desktop"],
     "triggersSeen": ["hover", "scroll"],
-    "sourceChangedSinceCapture": false               // mtime/hash heuristic vs generatedAt (06b §4)
+    "sourceChangedSinceCapture": false               // mtime/hash heuristic vs generatedAt (06b §7)
   }
 }
 ```
@@ -497,7 +497,7 @@ inversion of an Impeccable mechanism:
 
 - **No synthesize-on-thin for motion.** Impeccable's day-zero rule invents
   plausible default tokens so the panel always renders
-  ([`06b`](06b-generation-and-migration.md) §2). `motion.json` must do the
+  ([`06b`](06b-generation-and-migration.md) §4). `motion.json` must do the
   opposite: a thin memory **shows its thinness** via `coverage` (regions captured
   vs total) and renders blanks for un-captured regions — YoinkIt's Report posture
   ("blank regions are the parts not yet captured", `CONTEXT.md:96-110`). A token
@@ -560,4 +560,4 @@ coverage as the normal state, not a defect.
 - **INSPIRATION — confidence as the spine, coverage shows thinness, never
   synthesize.** The disciplines that keep an accumulating measured memory from
   decaying into an authored one. *Ref: §9; `CONTEXT.md:140-145`,
-  [`06b`](06b-generation-and-migration.md) §2.*
+  [`06b`](06b-generation-and-migration.md) §4.*
