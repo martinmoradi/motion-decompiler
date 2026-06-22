@@ -60,9 +60,12 @@ root.
 >   dispatches on, where `mdNewerThanJson` really lives (the readers), and how you
 >   verify a prompt-generator (run real LLMs, assert on the trace).
 > - [`06c-the-enforcement-reader.md`](06c-the-enforcement-reader.md):
->   `design-system.mjs` traced end to end — allowed-set construction (every
->   `canonical` + every `tonalRamp` stop), **tolerance** drift-flagging
->   (`COLOR_CHANNEL_TOLERANCE`, `RADIUS_TOLERANCE_PX`), value-not-string dedup, the
+>   `design-system.mjs` traced end to end — the loader (DESIGN.md mandatory, sidecar
+>   optional), allowed-set construction from **both halves** (frontmatter + every
+>   `canonical`/`tonalRamp` stop), **tolerance** drift-flagging
+>   (`COLOR_CHANNEL_TOLERANCE`, `RADIUS_TOLERANCE_PX`) with the fail-open ladder, the
+>   **two front-ends** (raw-text scan + computed-style DOM walk) and **two dedup
+>   layers**, the heavy false-positive defense that makes the scan usable, the
 >   live-server merge, and the Register one-field conditioner.
 > - [`06d-a-motion-json-for-yoinkit.md`](06d-a-motion-json-for-yoinkit.md): **the
 >   payoff.** A literal, written-out `.yoinkit/motion.json` schema; how a
@@ -166,7 +169,7 @@ re-verified this session.
 | [`skill/reference/init.md`](../../source/skill/reference/init.md) | 172 | Generation's **upstream**: writes `PRODUCT.md` (register) and hands off to `document` (`:134`, auto-detect scan vs seed). (06b §2a) |
 | [`skill/scripts/lib/design-parser.mjs`](../../source/skill/scripts/lib/design-parser.mjs) | 842 | The only code *near* generation — and it **reads** `DESIGN.md` prose back into a render model, stamping a *different* `schemaVersion: 2` (`:830`). Not the sidecar's writer. (06b §1b) |
 | **Consumption + enforcement** | | |
-| [`cli/engine/design-system.mjs`](../../source/cli/engine/design-system.mjs) | 750 | **The enforcement reader.** Folds memory → allowed set; flags `design-system-color/-font/-radius` drift within tolerance. (06c) |
+| [`cli/engine/design-system.mjs`](../../source/cli/engine/design-system.mjs) | 750 | **The enforcement reader.** Loads both halves (own YAML-subset parser + `JSON.parse`), folds → allowed set, flags `design-system-color/-font/-radius` drift within tolerance via two front-ends (raw-text scan `:512` + computed-style DOM walk `:584`), deduped twice (`:724`, `:704`). Called by `cli/main.mjs:139`, `detect-text/html`, `hook-lib.mjs:1229`. (06c) |
 | [`skill/scripts/live-server.mjs`](../../source/skill/scripts/live-server.mjs) | 1134 | `/design-system.json` (`:537-596`): merges raw sidecar + parsed `DESIGN.md` + `mdNewerThanJson`. (06c §4) |
 | **The register conditioner** | | |
 | [`skill/reference/brand.md`](../../source/skill/reference/brand.md) | 108 | Brand motion doctrine: ambitious page-load choreography (`:86,88,105`). (06c §5) |
@@ -447,11 +450,15 @@ named sub-dive, with tags matching the survey's scheme (**ADOPT** a pattern/sche
   fixture uses `version`/`source`). The reader tolerates it (every block guarded by
   `typeof` / `Array.isArray`), which is a feature to copy and a precision trap for
   anyone citing "the schema." (06a §6)
-- **Fonts are enforced from the prose frontmatter, colors/radii from the sidecar.**
-  The allowed-font axis reads `frontmatter.typography`
-  ([`design-system.mjs:275`](../../source/cli/engine/design-system.mjs)), not
-  `typographyMeta`. Enforcement reads **both halves** of the memory, which is why the
-  panel must merge them. (06c §2)
+- **Enforcement reads both halves of the memory; only fonts are single-source.**
+  The allowed-*color* set is fed by `frontmatter.colors` **and**
+  `sidecar.colorMeta` (`design-system.mjs:347-348`); allowed *radii* by
+  `frontmatter.rounded` **and** `sidecar.roundedMeta` (`:349-350`). The sidecar
+  contributes the *ramps* the flat frontmatter list lacks; for radii the frontmatter
+  is the *richer* source. Only allowed *fonts* are single-source —
+  `frontmatter.typography`, not the sidecar's `typographyMeta` (`:275,346`). "Colors
+  and radii come from the sidecar" is half the picture; the reader merges both files,
+  which is also why the panel must merge them. (06c §2-3)
 - **The motion token is curve-only, lossy, and not even self-consistent.** `ks-ease`
   is a curve referenced at 180ms in component CSS (`design.json:285`); the token has no
   duration. The same repo's CSS uses the curve 112 times at 8 inline durations, plus a
