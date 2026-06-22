@@ -68,12 +68,19 @@ root.
 >   layers**, the heavy false-positive defense that makes the scan usable, the
 >   live-server merge, and the Register one-field conditioner.
 > - [`06d-a-motion-json-for-yoinkit.md`](06d-a-motion-json-for-yoinkit.md): **the
->   payoff.** A literal, written-out `.yoinkit/motion.json` schema; how a
->   `__cap.dump()` spec folds in field by field; how multiple captures accumulate;
->   the free interop with `extensions.motion`; the motion `narrative` (human Notes);
->   the per-motion `register` tag (on YoinkIt's own `signature`/`importance` terms);
->   and the motion-consistency linter — `design-system.mjs` with its truth-source
->   inverted.
+>   payoff**, taken from proposal to buildable spec. A literal, written-out
+>   `.yoinkit/motion.json` schema placed as the **missing per-*site* tier above the
+>   entirely per-*run* `yoink-runs/` pipeline**; the **fold** as a pure
+>   `(dump, memory) → memory'` upsert (region assignment off page-model geometry,
+>   idempotent `observedIn`, worst-of-layers confidence, the measurement-vs-intent
+>   ownership split on re-capture); the free interop with `extensions.motion`; the
+>   motion `narrative` (human Notes); the per-motion `register` tag (on YoinkIt's own
+>   `signature`/`importance` terms); the motion-consistency linter mapped onto the
+>   **verified three-way enforcement** (font→trigger exact-membership, color→easing
+>   tolerance, radius→duration tolerance+escape) with the **auto-pass guards** that
+>   make a scan usable; the **lossless-index discipline** (every measured literal kept
+>   beside its token ref, inverting Impeccable's lossy projection); and §10's open
+>   decisions a future implementer still owns.
 >
 > **First-draft corrections (re-verified against `source/`).** The [06 survey](../../06-UNEXPLORED-TERRITORY.md)
 > §"Territory 1" was directionally right and its load-bearing quotes (the
@@ -337,13 +344,16 @@ correspondence at a glance:
 | Impeccable `design.json` (authored) | YoinkIt `motion.json` (measured) | Inversion |
 |---|---|---|
 | `schemaVersion` / `generatedAt` / `title` | same | **ADOPT** the frame verbatim |
+| `.impeccable/` sits **above** a `detect` run | `.yoinkit/` sits **above** the per-run `yoink-runs/` pipeline | **ADOPT** the missing per-*site* tier |
 | `extensions.motion[] = {name,value,purpose}` | `tokens.easings[]/durations[] = {name,value,purpose, confidence, observedIn}` | extend the interop row with measured fields |
-| LLM authors tokens (`/impeccable document`) | the **fold**: a pure fn of `__cap.dump()` | **drop** authoring; no value is invented |
+| **lossy** projection (kept 1 of ~16 real values) | **lossless** — measured literal kept beside the token ref | token = index, not replacement |
+| LLM authors tokens (`/impeccable document`) | the **fold**: a pure upsert of `__cap.dump()` | **drop** authoring; no value is invented |
 | `narrative` (LLM intent prose) | `narrative` from human **Notes** (`CONTEXT.md:248`) | same slot, opposite origin |
 | `Register` brand/product (whole-site, authored) | `register` signature/incidental (per-motion, from `importance`) | YoinkIt's native axis |
+| font=exact, color=tolerance, radius=tolerance+pill | trigger=exact, easing=tolerance, duration=tolerance+escape | same three strategies, one per axis |
 | `design-system.mjs` flags off-**authored**-ideal | motion linter flags off-**measured**-norm | same mechanism, truth-source inverted |
-| day-zero **synthesize** a default token | **never** — coverage shows thinness | the catch |
-| `mdNewerThanJson` (memory lags source) | `sourceChangedSinceCapture` (re-capture, can't re-author) | reader heuristic, reframed |
+| day-zero **synthesize** a default token | **never** — coverage + `unknowns[]` show thinness | the catch |
+| `mdNewerThanJson` mtime (memory lags source) | `sourceChangedSinceCapture` **hash** (the contract's freshness pattern) | reader heuristic, done *better* |
 
 A `motion.json` token is a valid `extensions.motion` row, so a YoinkIt capture can
 **seed an Impeccable motion block with measured tokens** — the one thing
@@ -362,12 +372,15 @@ named sub-dive, with tags matching the survey's scheme (**ADOPT** a pattern/sche
 1. **The durable artifact — ADOPT.** A committed, `schemaVersion`/`generatedAt`-
    stamped `.yoinkit/motion.json` (`tokens` + `motions` by Region + `narrative` +
    `coverage`) replacing N throwaway gitignored `*.animation.json`. The single
-   highest-value move; it is the *object* YoinkIt lacks.
-   *([`06a`](06a-the-persisted-artifact.md), [`06d`](06d-a-motion-json-for-yoinkit.md) §3)*
+   highest-value move; it is the *object* YoinkIt lacks — the missing per-*site* tier
+   above the entirely per-*run* `yoink-runs/` pipeline.
+   *([`06a`](06a-the-persisted-artifact.md), [`06d`](06d-a-motion-json-for-yoinkit.md) §1, §3)*
 
-2. **The fold (`__cap.dump()` → memory) — ADOPT.** A pure function from a capture
-   spec + existing memory to a new memory. No authoring step exists in it; that is
-   what keeps the object measured. *([`06d`](06d-a-motion-json-for-yoinkit.md) §4)*
+2. **The fold (`__cap.dump()` → memory) — ADOPT.** A pure `(dump, memory) → memory'`
+   **upsert by `id`** (not an append): no authoring step exists in it, `observedIn`
+   stays idempotent across re-captures, and measurement owns mechanics while the human
+   owns intent. That is what keeps the object measured.
+   *([`06d`](06d-a-motion-json-for-yoinkit.md) §4)*
 
 3. **The motion-consistency linter — ADOPT (truth-source inverted).** `design-system.mjs`'s
    allowed-set + tolerance-flag mechanism, reading the site's measured easing/duration
@@ -437,7 +450,9 @@ named sub-dive, with tags matching the survey's scheme (**ADOPT** a pattern/sche
   comment), and the field name is a scattered convention reused on ≥4 unrelated
   artifacts. The "migratable schema" is migratable by **regeneration**, which YoinkIt
   cannot do (it must re-measure) — so a YoinkIt reader must fail *visible*, not
-  *silent-empty*. (06b §6)
+  *silent-empty* (else an empty allow-set reports "no drift" on a memory it failed to
+  load). This is elevated from observation to a hard build requirement in 06d. (06b
+  §6; the YoinkIt requirement, 06d §10)
 - **`mdNewerThanJson` lives in two readers with no shared helper.** Computed
   identically at [`design-system.mjs:386`](../../source/cli/engine/design-system.mjs)
   and [`live-server.mjs:574`](../../source/skill/scripts/live-server.mjs) — the
